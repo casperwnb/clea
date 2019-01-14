@@ -43,6 +43,7 @@
 
 * 栈
 [[file:stack.org][栈]]
+
 * 队列
 [[file:queue.org][队列]]
 
@@ -50,6 +51,7 @@
 [[file:recursive.org][递归]]
 
 * 排序
+[[file:sort.org][排序]]
 
 * 数据结构与算法分析读书笔记
 [[file:datastruct_algorithmanalysis.org][数据结构与算法分析读书笔记]]

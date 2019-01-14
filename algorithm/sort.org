@@ -81,6 +81,12 @@ a[i]<=a[j], i<j
 merge_sort(p...r) = merge(merge_sort(p...q), merge_sort(q+1...r))
 终止条件是: p >= r不再继续分解
 
+[[file:~/notes/clea/images/mergesort.jpg][归并排序图解]]
 
+[[file:~/notes/clea/code/mergesort.c][归并排序代码]]
+
+归并排序算法的核心部分其实就是merge(合并)的部分, 前面会一直拆分数据, 直到最后剩下两个元素的时候
+开始合并数据, 因此需要注意递归的深度问题.
+TODO: merge函数还可以通过哨兵的方式优化代码? HOW
 
 * 快速排序
