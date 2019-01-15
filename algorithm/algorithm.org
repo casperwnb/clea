@@ -53,5 +53,7 @@
 * 排序
 [[file:sort.org][排序]]
 
+* 查找
+
 * 数据结构与算法分析读书笔记
 [[file:datastruct_algorithmanalysis.org][数据结构与算法分析读书笔记]]

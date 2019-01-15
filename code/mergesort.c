@@ -89,6 +89,29 @@ T(n) = 2*T(n/2) + n
 python版本归并排序:
 # encoding: utf-8
 
+# merge使用哨兵
+def merge(data, start, mid, end):
+    left = data[start:mid+1]
+    right = data[mid+1:end+1]
+
+    maxvalue = float("inf")
+    left.append(maxvalue)
+    right.append(maxvalue)
+    i = j = 0
+    k = start
+
+    # 使用left的理由: 1. left中的个数一定会大于等于right
+    # 使用!=比使用<的效率会高一点儿
+    while left[i] != maxvalue:
+        if left[i] < right[j]:
+            data[k] = left[i]
+            i += 1
+        else:
+            data[k] = right[j]
+            j += 1
+        
+        k += 1
+
 def merge(data, start, mid, end):
     i = start
     j = mid+1

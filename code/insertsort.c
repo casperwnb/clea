@@ -39,6 +39,18 @@ void insertsortv2(int *data, int n) {
     }
 }
 
+void insertsortv3(int *data, int n) {
+    for(int i=1; i<n; ++i) {
+        int j = i;
+        while(data[j-1] > data[j] && j>0) {
+            int tmp = data[j-1];
+            data[j-1] = data[j];
+            data[j] = tmp;
+            --j;
+        }
+    }
+}
+
 int main() {
     int data[] = {3, 5, 4, 1, 2, 6, 7};
     int n = sizeof(data)/sizeof(data[0]);
