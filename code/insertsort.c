@@ -67,14 +67,34 @@ def insertsort(data):
 
     for i in range(1, size):
         tmp = data[i]
-        jj = 1
+        loc = 0
         for j in range(i-1, -1, -1):
             if data[j] > tmp:
                 data[j+1] = data[j]
             else:
-                jj = j
+                loc = j
                 break
-        data[jj+1] = tmp
+
+        # 这一段增加了认知负担, 不友好, 还是下面两种比较好
+        if data[0] > v:
+            data[0] = v
+        else:
+            data[loc+1] = v
+
+def insertsortv1(data):
+    size = len(data)
+
+    for i in range(1, size):
+        tmp = data[i]
+        loc = 0
+        for j in range(i-1, -1, -1):
+            if data[j] > tmp:
+                data[j+1] = data[j]
+                loc = j - 1
+            else:
+                loc = j
+                break
+        data[loc+1] = tmp
 
 def insertsortv2(data):
     size = len(data)

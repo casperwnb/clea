@@ -47,6 +47,14 @@
 * 队列
 [[file:queue.org][队列]]
 
+* 跳表
+[[file:skiplist.org][跳表]]
+
+* 散列表
+[[file:hashtable.org][散列表]]
+* 树
+[[file:binarytree.org][树]]
+
 * 递归
 [[file:recursive.org][递归]]
 
@@ -54,6 +62,7 @@
 [[file:sort.org][排序]]
 
 * 查找
+[[file:search.org][查找]]
 
 * 数据结构与算法分析读书笔记
 [[file:datastruct_algorithmanalysis.org][数据结构与算法分析读书笔记]]
