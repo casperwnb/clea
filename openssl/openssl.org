@@ -1,0 +1,22 @@
+* LibreSSL
+** 已经使用LibreSSL替换OpenSSL的系统
+OpenBSD自6.5起, Mac OSX自10.11起, Alpine Linux自3.5.0起.
+
+** 编译安装
+1. 删掉OpenSSL开发包
+   删掉的只是开发包, 即只删除-devel或-dev结尾的, 不要将基础包也删除了
+   CentOS7: yum erase openssl-devel, 可能会删掉mysql-devel等开发包
+   Ubuntu16: apt remove libssl-dev
+2. 编译安装LibreSSL
+   获取源码, ./configure --prefix=/which/path && make && make install
+   确保/usr/local/lib已经在ld.so.conf中或ld.so.conf.d/*.conf中.
+   如果未在可通过 echo /usr/local/lib > /etc/ld.so.conf.d/local.conf 来添加.
+   然后更新缓存,并查看 libressl 的 libssl.so 版本:
+   ldconfig
+   ldconfig -v | fgrep libssl
+3. 编译安装Nginx
+   yum install -y pcre-devel zlib-devel
+   apt install -y zlib1g-dev libpcre3-dev
+   
+   下载nginx源码, ./configure --with-http_ssl_module
+
