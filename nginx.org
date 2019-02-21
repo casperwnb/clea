@@ -1,0 +1,1819 @@
+* Nginx插件开发
+** 环境准备(CentOS)
+1. 下载最新的nginx源码
+2. 安装依赖
+   yum install gcc pcre-devel openssl openssl-devel
+3. 编译安装
+   进入nginx的源码目录执行命令
+   ./configure --prefix=/whichpath/to/install && make && make install
+4. 运行Nginx
+   /nginx_path/sbin/nginx
+   如果访问出现403错误, 可以设置nginx.conf中的user 为 root
+   然后重启: /nginx_path/sbin/nginx -s reload
+
+** 一个简单的示例
+[[http://git.oschina.net/wujunze/nginx_module_echo/blob/master/README_zh.md][参考链接]]
+
+* Nginx源码阅读
+[[http://ialloc.org/posts/2017/11/03/ngx-notes-prerequisite/][Nginx 源代码笔记(web)]]
+* Lua
+[[http://ialloc.org/posts/2017/11/17/programming-in-lua/][lua学习(web)]]
+
+
+* nginx操作的基本命令
+** 停止
+停止nginx是通过向nginx进程发送信号来进行的.
+
+ps -ef | grep nginx: 找到master进程, 它的pid就是主进程号
+kill -QUIT nginx_pid: 从容停止nginx
+kill -TERM nginx_pid: 快速停止nginx
+kill -9 nginx_pid: 强制停止nginx
+如果在nginx.conf配置了pid文件存放路径,则该文件存放的就是Nginx主进程号,
+如果没指定则放在nginx的logs目录下.有了pid文件,可以直接接向Nginx发送信号了,
+命令如下: kill -信号类型 '/which/nginx.pid'
+
+** 平滑重启
+kill -HUP nginx_pid或者/which/nginx.pid
+也可以使用命令: /which/nginx -p workdir -c /which/nginx.conf -s reload
+注意: 修改配置文件后最好先检查一下是否正确, /which/nginx -p workdir -c /which/nginx.conf -t
+
+** 平滑升级
+1. 用新nginx程序替换旧程序文件
+2. kill -USR2 旧版nginx主进程id 或者 /which/nginx.pid
+   此时旧的Nginx主进程将会把自己的进程文件改名为.oldbin,然后执行新版 Nginx.
+   新旧Nginx会同时运行,共同处理请求.
+3. 逐步停止旧版 Nginx
+   kill -WINCH 旧版主进程号
+   慢慢旧的工作进程就都会随着任务执行完毕而退出
+
+* openresty
+** 第三方插件安装
+openresty的源码的bundle目录中存放着nginx核心和很多第三方模块,比如有Lua和LuaJIT.
++ 安装其他模块
+  ngx_cache_purge模块: 用于清理nginx缓存.
+  ngx_upstream_check_module模块: 用于upstream的健康检查
+
+编译命令:
+./configure --prefix=/openresty/install/path --with-http_realip_module\
+  --with-pcre  --with-luajit --add-module=./bundle/ngx_cache_purge-2.3/\
+  --add-module=./bundle/nginx_upstream_check_module-0.3.0/ -j2
+
+编译命令说明:
+--with*** 安装一些内置/集成的模块
+--with-http_realip_module 取用户真实ip模块
+-with-pcre Perl兼容的达式模块
+--with-luajit 集成luajit模块
+--add-module: 添加自定义的第三方模块
+
++ 编辑nginx.conf文件
+  在http部分添加如下配置:
+  #lua模块路径,多个之间";"分隔,
+  其中";;"表示默认搜索路径,默认到/openresty/install_path/nginx下找
+  lua_package_path "/usr/servers/lualib/?.lua;;";  #lua 模块
+  lua_package_cpath "/usr/servers/lualib/?.so;;";  #c模块
+
+  为了方便开发, 可以在nginx.conf同级目录下新建一个lua.conf文件,该文件主要用于
+  配置loacation, 初始内容如下:
+  #+BEGIN_SRC text
+  server {
+    listen 80;
+    server_name _;
+  }
+  #+END_SRC
+  然后在nginx.conf的http中包含该文件: include lua.conf;
+  
+** mac
+brew update
+brew install pcre openssl
+homebrew会将pcre, openssl安装在/usr/local/opt目录下
+
+make && make install
+
+** 启动
+将nginx的二进制路径加入到PATH中
+然后建立一个工作目录:
+mkdir openresty_work && cd openresty_work
+mkdir conf logs
+建立nginx.conf文件, 内容如下:
+
+#+BEGIN_SRC nginx
+worker_processes  1;
+error_log logs/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    server {
+        listen 8080;
+        lua_code_cache off;
+
+        location / {
+            default_type text/html;
+            #content_by_lua '
+            #    ngx.say("<p>hello, world</p>")
+            #';
+            # lua目录是与logs同级的目录
+            content_by_lua_file lua/hello.lua;
+        }
+    }
+}
+#+END_SRC
+
+启动nginx: nginx -p `pwd` -c conf/nginx.conf
+使用curl http://127.0.0.1:8080/ 来检查是否启动成
+
+如果对nginx.conf文件有修改, 则需要重新加载配置文件
+nginx -p `pwd` -c conf/nginx.conf -s reload
+
+ngx_lua 的文档是一个非常重要的文档, [[https://www.nginx.com/resources/wiki/modules/lua/][链接]]
+
+** 使用
+[[https://www.gitbook.com/book/moonbingbing/openresty-best-practices/details][openresty最佳实践]]
+[[https://openresty.org/download/agentzh-nginx-tutorials-zhcn.html][春哥的Nginx教程]]
+[[http://openresty.org/en/presentations.html][Presentations]]
+[[https://github.com/iresty/nginx-lua-module-zh-wiki][ngx-lua-module]]
+[[http://tengine.taobao.org/book/][淘宝团队的Nginx开发从入门到精通]]
+
+在调用api时, 应该尽量调用ngx_lua的api, 因为ngx_lua的api是异步的, 但是lua的api是同步的
+因此会导致nginx阻塞.
+例如: 在执行ngx.sleep(1)时, 该worker进程还可以接受其他的请求, 但如果使用lua的sleep实现
+则会进行阻塞.
+
+nginScript是Nginx官方推出的一个新的配置语言,把JavaScript VM嵌入到nginx中,
+提供简单的 nginx 配置功能.
+
+缓存失效风暴: lua-resty-lock, 用于解决缓存失效风暴
+
+FFI:是luajit中的
+
+开源软件的选择: 选择比较活跃的开源库.
+可以将下载下来的第三方resty模块放到openresty的resty目录下即可.
+
+** 子请求
+有三种方式可以发生子请求
+ngx.location.capture: 内部c级别的调用, 不能发起到对外部的请求, 
+即不能请求类似www.baidu.com, 子请求与父请求属于同一个链接中, 资源不会释放.
+也无法跨server进行处理, 只能在同一个server下的不同location.
+
+exec: 内部跳转, 附带一个连接托管的动作,
+比如: 在location a中调用exec到loaction b, 则location a的链接完全托管给
+location b,并且在调用exec前, 不能调用任何输出的行为, 如ngx.say()等.
+redirect: 通过返回302
+
+ngx.location.capture_multi: 可以同时处理多个子请求, 总的运行时间是耗时最长的那一个.
+
+** nginx执行阶段
+Nginx 处理请求的过程一共划分为 11 个阶段,按照执行顺序依次是:
+post-read、server-rewrite、find-config、rewrite、post-rewrite、 preaccess、
+access、post-access、try-files、content、log.
+
+post-read: 读取请求内容阶段, Nginx读取并解析完请求头之后就立即开始运行
+例如模块ngx_realip 就在 post-read 阶段注册了处理程序,它的功能是迫使 Nginx
+认为当前请求的来源地址是指定的某一个请求头的值.
+
+server-rewrite: Server请求地址重写阶段
+当 ngx_rewrite 模块的set配置指令直接书写在 server 配置块中时,基本上都是运行在 server-rewrite 阶段.
+
+find-config: 配置查找阶段
+这个阶段并不支持 Nginx 模块注册处理程序,而是由 Nginx 核心来完成当前请求与
+location 配置块之间的配对工作.
+
+rewrite: Location请求地址重写阶段, 当 ngx_rewrite 模块的指令用于 location 块中时,
+便是运行在这个 rewrite 阶段, 另外ngx_set_misc(设置md5、encode_base64等)模块的指令,
+还有 ngx_lua 模块的 set_by_lua 指令和 rewrite_by_lua 指令也在此阶段.
+
+post-rewrite: 请求地址重写提交阶段
+由 Nginx 核心完成 rewrite 阶段所要求的"内部跳转"操作,如果 rewrite 阶段有此要求的话.
+
+preaccess: 访问权限检查准备阶段
+标准模块 ngx_limit_req 和 ngx_limit_zone 就运行在此阶段,前者可以控制请求的访问频度,
+而后者可以限制访问的并发度.
+
+access: 访问权限检查阶段
+标准模块 ngx_access、第三方模块 ngx_auth_request 以及第三方模块 ngx_lua 的 access_by_lua
+指令就运行在这个阶段, 配置指令多是执行访问控制性质的任务, 比如检查用户的访问权限,
+检查用户的来源 IP 地址是否合法.
+
+post-access: 访问权限检查提交阶段, 主要用于配合 access 阶段实现标准 ngx_http_core 模块
+提供的配置指令 satisfy 的功能. satisfy all(与关系), satisfy any(或关系)
+
+try-files: 配置项try_files处理阶段, 专门用于实现标准配置指令 try_files 的功能.
+如果前 N-1 个参数所对应的文件系统对象都不存在,try-files 阶段就会立即发起"内部跳转"到最后一个参数
+(即第 N 个参数)所指定的 URI.
+
+content: 内容产生阶段
+Nginx 的 content 阶段是所有请求处理阶段中最为重要的一个,因为运行在这个阶段的配置指令一般都肩负着生成"内容"
+并输出 HTTP 响应的使命.
+
+log: 日志模块处理阶段, 记录日志.
+
+*** nginx下lua的处理阶段与使用范围
+init_by_lua            http
+set_by_lua             server, server if, location, location if
+rewrite_by_lua         http, server, location, location if
+access_by_lua          http, server, location, location if
+content_by_lua         location, location if
+header_filter_by_lua   http, server, location, location if
+body_filter_by_lua     http, server, location, location if
+log_by_lua             http, server, location, location if
+timer
+
+| 指令                      | 所处处理阶段         | 使用范围               | 说明                                            |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| init_by_lua               | loading-config       | http                   | nginx Master进程加载配置时执行块                |
+| init_by_lua_file          |                      |                        | 通常用于初始化全局配置/预加载Lua模              |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| init_worker_by_lua        | starting-worker      | http                   | 每个Nginx Worker进程启动时调用的计时器          |
+| init_worker_by_lua_file   |                      |                        | 如果Master进程不允许则只会在init_by_lua之后调用 |
+|                           |                      |                        | 通常用于定时拉取配置/数据，或者后端服务的健康检 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| set_by_lua                | rewrite              | server,server if       | 设置nginx变量,可以实现复杂的赋值逻辑;快         |
+| set_by_lua_file           |                      | location, location if  | 此处是阻塞的,Lua代码要做到非常                  |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| rewrite_by_lua            | rewrite tail         | http, server, location | rewrite阶段处理,可以实现复杂的转发/重定向逻辑   |
+| rewrite_by_lua_file       |                      | location if            |                                                 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| access_by_lua             | access tail          | http, server, location | 请求访问阶段处理,用于访问控制                   |
+| access_by_lua_file        |                      | location if            |                                                 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| content_by_lua            | content              | location, location if  | 内容处理器,接收请求处理并输出响应               |
+| content_by_lua_file       |                      |                        |                                                 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| header_filter_by_lua      | output-header-filter | http, server, location | 设置header和cookie                              |
+| header_filter_by_lua_file |                      | location if            |                                                 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| body_filter_by_lua        | output-body-filter   | http, server, location | 对响应数据进行过滤，比如截断、替换              |
+| body_filter_by_lua_file   |                      | location if            |                                                 |
+|---------------------------+----------------------+------------------------+-------------------------------------------------|
+| log_by_lua                | log                  | http, server, location | log阶段处理，比如记录访问量/统计平均响应时间    |
+| log_by_lua_file           |                      | location if            |                                                 | 
+
+  
+init_by_lua:
+在nginx重新加载配置文件时，运行里面lua脚本，常用于全局变量的申请。
+例如lua_shared_dict共享内存的申请，只有当nginx重起后，共享内存数据才清空，这常用于统计。
+
+set_by_lua:
+设置一个变量，常用与计算一个逻辑，然后返回结果
+该阶段不能运行Output API、Control API、Subrequest API、Cosocket API
+
+rewrite_by_lua:
+在access阶段前运行，主要用于rewrite
+
+access_by_lua:
+主要用于访问控制，能收集到大部分变量，类似status需要在log阶段才有。
+这条指令运行于nginx access阶段的末尾，因此总是在 allow 和 deny 这样的指令之后运行，虽然它们同属 access 阶段。
+
+content_by_lua:
+阶段是所有请求处理阶段中最为重要的一个，运行在这个阶段的配置指令一般都肩负着生成内容（content）并输出HTTP响应。
+
+header_filter_by_lua:
+一般只用于设置Cookie和Headers等
+该阶段不能运行Output API、Control API、Subrequest API、Cosocket API
+
+body_filter_by_lua:
+一般会在一次请求中被调用多次, 因为这是实现基于 HTTP 1.1 chunked 编码的所谓"流式输出"的。
+该阶段不能运行Output API、Control API、Subrequest API、Cosocket API
+
+log_by_lua:
+该阶段总是运行在请求结束的时候，用于请求的后续操作，如在共享内存中进行统计数据,如果要高精确的数据统计，应该使用body_filter_by_lua。
+该阶段不能运行Output API、Control API、Subrequest API、Cosocket API
+
+利用执行阶段的一个例子
+比如:
+#+BEGIN_SRC text
+# 明文协议版本
+location /mixed {
+  content_by_lua '...'; # 请求处理
+}
+
+# 加密协议版本, 利用执行阶段, 不用在content_by_lua中处理
+location /mixed {
+  access_by_lua '...'; # 请求加密解码
+  content_by_lua '...'; # 请求处理, 不需要关系通信解码/加密
+  body_filter_by_lua '...';  # 应答加密编码
+}
+#+END_SRC
+** 通过lua操作HTTP头
+一般会在access_by_lua阶段操作请求头
+请求头: ngx.req.get_headers, ngx.req.set_header
+请求头是终端发送给服务器的包所带的头
+
+get_headers(par1, par2):
+par1表示解析的请求头数目, 默认情况下是100个, 设置为0, 则不限制, 1则解析一个
+第二个参数默认情况下会将头域全部转换为小写,值不会变设置为true后就不会转换了, 
+保持原样. 这两个参数都是可选参数.
+
+set_header(domain, value)
+第二个参数可以是一个lua table, 形如: {"v1", "v2"}
+第二个参数设置为nil或{}, 则可以删除该域
+set_header可以修改原有请求中的头信息, 并且将修改后的值传递到子请求中.
+
+一般会在header_filter_by_lua阶段操作响应头.
+响应头是服务器返回给终端的包的头信息
+
+ngx.resp.get_headers,
+ngx.header.*: 读取响应头中的信息
+ngx.header[domain] = 'xx': 重写头信息
+ngx.header["foo"] = {'a=32;path=/', 'b=4;path=/'} 设置多个值, 但对于特殊的域只会接受
+table中的最后一个值.
+
+ngx.header["X-header"] = nil 或 {} // 删除头信息
+默认情况下设置域是无关大小写的, 即: ngx.header["demon"] 和 ngx.header["Demon"] 设置的是同一个域,
+并且所有的下划线都会转换为"-", 在对应的location设置lua_transform_underscores_in_response_headers off
+可以取消下划线的转换
+
+ngx.header其实是一个lua的table, 但是不能使用打印table的方法对其进行输出, 如果需要输出响应头
+中的数据, 可以使用ngx.resp.get_headers()函数
+
+** json和lua table的转换
+#+BEGIN_SRC lua
+local json = require "cjson"
+
+local function format_table(t)
+   local str = ""
+   for k, v in pairs(t) do
+      str = str .. k .. '--' .. v .. '\r\n'
+   end
+   return str
+end
+
+-- 将str转换为lua table
+local str_json = '{"key": "this is key", "value": "this is value", "number": 1}'
+local t = json.decode(str_json)
+ngx.say(format_table(t))
+
+-- 将lua table转换为str
+local t2 = {key='table key', value='table value', num=1}
+local str_json2 = json.encode(t2)
+ngx.say(str_json2)
+
+
+-- 将lua table转换为json 数组
+local t3 = {key={"list1", "list2"}, num=2}
+local str_json3 = json.encode(t3)
+ngx.say(str_json3)
+
+-- 将空table转换为json的空数组
+local t4 = {}
+-- 如果不加该语句, 则会变成json空对象
+json.encode_empty_table_as_object(false)
+local str_json4 = json.encode(t4)
+ngx.say(str_json4)
+
+
+local t5 = {1, 2}
+t5[6] = 99
+-- 如果不加该语句, 则会报错
+-- 如果下标不是很大, 则中间的某些数会使用nil填充
+-- 如果下标很大, 则只会显示有数据的内容
+json.encode_sparse_array(true)
+local str_json5 = json.encode(t5)
+ngx.say(str_json5)
+
+
+-- error capture
+local wrong_str = '[["key":"this is key", "value":"this is value"}]'
+local function json_decode(str)
+   local json_value = nil
+   pcall(function(str) json_value = json.decode(str) end, str)
+   return json_value
+end
+
+local t6 = json_decode(wrong_str)
+ngx.say(t6)
+
+#+END_SRC
+** 定时器
+#+BEGIN_SRC lua
+local function print_table(t)
+   local function parse_array(key, tab)
+      local str = ''
+
+      for _, v in pairs(tab) do
+         str = str .. key .. ' ' .. v .. '\r\n'
+      end
+
+      return str
+   end
+   local str = ''
+   for k, v in pairs(t) do
+      if type(v) == 'table' then
+         str = str .. parse_array(k, v)
+      else
+         str = str .. k .. ' ' .. (v) .. '\r\n'
+      end
+   end
+   return str
+end
+
+local function print_array(tab)
+   local str = ''
+   for _, v in pairs(tab) do
+      str = str .. ' ' .. tostring(v) .. '\r\n'
+   end
+   return str
+end
+
+local delay = 1 -- 1 seconds
+local handler
+
+-- premature是一个标识, 标识当前的ngx实例是否正在退出,
+-- 如果为true, 则需要进行return
+handler = function (premature, param, ...)
+   if premature then
+      return
+   end
+
+   local t = {...}
+   local str = print_array(t)
+   ngx.log(ngx.ERR, "param is " .. param .. ' left param: ' .. str)
+
+   -- 循环调用, 使用嵌套的思路
+   -- ngx.timer.at(delay, handler, "hello again")
+end
+
+
+-- timer.at(param1, param2, param3): param1是需要延迟的秒数, 第二个参数是一个lua的回调函数
+-- 第三个参数需要传递的数据, 可以是可变长度的参数, 会作为回调函数的参数
+-- 大部分的lua value都可以作为参数, 但是一些跟链接强绑定的对象则不能传递
+-- 如socket.udp, socket.tcp等, 如果在回调函数里需要用到这些对象, 则需要在回调函数中创建这些对象
+-- 在回调函数中也不能使用ngx.say, ngx.print等于上下文有关系的函数,
+-- 另外runner_timer会占用一个假连接, 这个连接是通过命令来配置的,例如
+-- 在nginx.conf中配置了worker_connection = 100, 此时在业务代码中启动了90个timer,
+-- 并且这90个timer都在运行, 则只会剩下10个连接可以给终端使用.
+-- 通常会使用lua_pedding_timer, lua_max_running_timer来限制等待中的和运行中的timer的数量
+
+local ok, err = ngx.timer.at(delay, handler, "hello world", "demon", "wnb")
+#+END_SRC
+** 共享内存
+lru: 通过set函数向共享内存中添加的节点既是一个红黑树的节点也是一个双向链表的节点.
+在openresty中调用set添加节点时, 会先查找红黑树, 如果找到了该节点, 会从双向链表中取出,
+放到链表的头部, 如果访问不到, 则会申请内存, 如果申请内存失败, 则会删除链表的最后一个
+节点, 在申请一次, 如果此时还不能用于存放新的节点, 则会向lua包一个"no memory"的错误.
+
+首先需要在nginx.conf中的http段添加配置, lua_shared_dict ngx_cache 1m;
+shared_dict是
+
+#+BEGIN_SRC lua
+-- 获取共享内存
+-- local shared = ngx.shared['ngx_cache']
+local shared = ngx.shared.ngx_cache
+
+local suc, err, forc
+-- 设置值, 尝试看能设置多少
+for index=1, 10000, 1 do
+   -- forc表示set函数是否启用了lru特性
+   suc, err, forc = shared:set(tostring(index), 'value' .. tostring(index))
+end
+
+-- 获取key, 默认情况下最多只会读取1024个, 如果设置为0, 这表示不限制
+local keys = shared:get_keys()
+local i = shared:incr("i", 1)
+ngx.say(#keys)
+
+-- 展示no memory 错误
+suc, err, forc = shared:set("foo", string.rep('a', 100))
+ngx.say(err)
+
+#+END_SRC
+
+性能折损: 
+slab: 会将申请的内存切分为2k,4k,...等大小, 然后slab会分配出满足内存申请
+的最小的内存段, 这样会减少内存碎片, 但是会导致内存利用率降低
+
+缓存失效风暴:
+解决流程:
+1. 访问缓存, 访问到的时候, 直接返回
+2. 如果没有命中, 则会创建一把锁, 这样大量的请求会阻塞
+3. 拿到锁的请求在访问一次缓存,
+4. 向上游服务器拿数据, 并放入缓存, 释放锁
+5. 此时阻塞在第2步的请求就会命中缓存
+
+** cosocket
+ngx.socket.tcp: 是一个socket的client, 不是socket server
+ngx.socket.udp:
+
+** openresty的全局环境和lua_code_cache
+lua_code_cache为off时, openresty会为每个请求创建一个新的vm,
+为on时,会让整个worker共享一个vm, 并为每个请求分配一个全局环境,来
+做一个回话的隔离.
+
+全局变量:
+#+BEGIN_SRC lua
+-- 获取ngx可以调用的函数
+local function format_table(t)
+   local str = ''
+   for k, v in pairs(t) do
+      str = str .. k .. ' - ' .. type(v) .. '\r\n'
+   end
+   return str
+end
+ngx.say(format_table(getmetatable(_G).__index))
+
+-- 一个第三方库的写法通常有两种
+-- 一种是使用module方法, 使用该方法申明的模块在导入时会添加到全局变量_G中
+-- lib1_test.lua, 该文件需要放到openresty 的lualib目录中
+module('logic_func', package.seeall)
+
+function print_module()
+  return "this is logic func by module method"
+end
+
+-- resty风格的库写法
+-- lib2_test.lua
+local _M = {
+   _VERSION = '0.01',
+}
+
+
+local mt = { __index = _M }
+
+-- 如果导入该模块, 此处的全局变量也会添加到全局变量中,
+-- 建议做法是使用local进行申明
+global_var = 'global table by demo resty module'
+
+function _M.print_module()
+   return 'this is table by demo resty module'
+end
+
+-- 不要忘记了返回_M
+return _M
+
+-- 两种库的写法的引入方式是一致的
+local logic = require("lib_test1")
+local logic2 = require("lib_test2")
+
+#+END_SRC
+
+* OpenResty 实践
+** socket编程发展
+为了处理大量连接请求场景,需要使用非阻塞 I/O和复用.
+select、poll 和 epoll 是 Linux API 提供的 I/O 复用方式.
+Linux2.6中加入了epoll.
+Nginx 就是使用 epoll 来实现 I/O 复用支持高并发.
+
+1. select模型
+   int select (int n, fd_set *readfds, fd_set *writefds,
+        fd_set *exceptfds, struct timeval *timeout);
+   select 函数监视的文件描述符分 3 类,分别是 writefds、readfds和 exceptfds.
+   调用后 select 函数会阻塞,直到有描述符就绪(有数据 可读、可写、或者有except),
+   或者超时(timeout 指定等待时间,如果立即返回设为 null 即可).
+   当 select 函数返回后,通过遍历 fd_set,来找到就绪的描述符.
+   select目前在所有平台都支持, 缺点在于单个进程能够监视的文件描述符的数量存在最大限制,
+   在 Linux 上一般为1024,可以通过修改宏定义甚至重新编译内核的方式提升这一限制,
+   但是这样也会造成效率的降低.
+
+2. poll模型
+   int poll(struct pollfd *fds, unsigned int nfds, int timeout);
+   poll 使用一个 pollfd 的指针实现select的三个位图表示三个fdset的方式.
+   struct pollfd {
+     int fd; /* file descriptor */
+     short events; /* requested events to watch */
+     short revents; /* returned events witnessed */
+   };
+
+   pollfd 结构包含了要监视的 event 和发生的 event,不再使用 select "参数-值"传递的方式.
+   pollfd 并没有最大数量限制(但是数量过大后性能也是会下降), poll 返回后,
+   也需要轮询 pollfd 来获取就绪的描述符.
+
+   select 和 poll 都需要在返回后,通过遍历文件描述符来获取已经就绪的 socket.
+   事实上,同时连接的大量客户端在一时刻可能只有很少的处于就绪状态,
+   因此随着监视的描述符数量的增长,其效率也会线性下降.
+
+3. epoll模型
+   int epoll_create(int size)；
+   int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)；
+   typedef union epoll_data {
+     void *ptr;
+     int fd;
+     __uint32_t u32;
+     __uint64_t u64;
+   } epoll_data_t;
+
+   struct epoll_event {
+     __uint32_t events;      /* Epoll events */
+     epoll_data_t data;      /* User data variable */
+   };
+
+   int epoll_wait(int epfd, struct epoll_event * events,
+     int maxevents, int timeout);
+   epoll_create 函数创建 epoll 文件描述符,参数 size 并不是限制了 epoll 
+   所能监听的描述符最大个数,只是对内核初始分配内部数据结构的一个建议.
+   epoll_ctl 完成对指定描述符 fd 执行 op 操作控制,event 是与 fd 关联的监听事件.
+   op 操作有三种:添加 EPOLL_CTL_ADD,删除 EPOLL_CTL_DEL,修改 EPOLL_CTL_MOD.
+   分别添加、删除和修改对 fd 的监听事件. epoll_wait 等待 epfd 上的 IO 事件,
+   最多返回 maxevents 个事件.
+
+   在 select/poll 中,进程只有在调用一定的方法后,内核才对所有监视的文件描述符进行扫描,
+   而 epoll 事先通过 epoll_ctl() 来注册一个文件描述符,一旦基于某个文件描述符就绪时,
+   内核会采用类似 callback 的回调机制,迅速激活这个文件描述符,
+   当进程调用 epoll_wait 时便得到通知.
+
+   + epoll的优点
+     监视的描述符数量不受限制,它所支持的 fd 上限是最大可以打开文件的数目
+     具体数目可以 cat /proc/sys/fs/file-max 察看
+     一般来说这个数目和系统内存关系很大
+     IO 的效率不会随着监视 fd 的数量的增长而下降, 通过每个 fd 定义的回调函数来实现的,
+     只有就绪的 fd 才会执行回调函数.
+
+     支持水平触发和边沿触发两种模式:
+     水平触发模式:文件描述符状态发生变化后,如果没有采取行动,它将后面反复通知,
+     这种情况下编程相对简单,libevent 等开源库很多都是使用的这种模式.
+     
+     边沿触发模式:只告诉进程哪些文件描述符刚刚变为就绪状态,只说一遍,如果没有采取行动,
+     那么它将不会再次告知.理论上边缘触发的性能要更高一些,但是代码实现相当复杂
+     (Nginx 使用的边缘触发)
+
+     mmap加速内核与用户空间的信息传递.epoll 是通过内核与用户空间 mmap 同一块内存,
+     避免了无谓的内存拷贝.
+
+** lua 入门
+lua官网: http://www.lua.org
+luajit官网: http://luajit.org
+lua5.1参考手册: http://www.codingnow.com/2000/download/lua_manual.html
+lua5.3参考手册: http://cloudwu.github.io/lua53doc/
+
+*** lua基础数据类型
+函数type可以返回一个值或一个变量所属的类型.
+#+BEGIN_SRC lua
+print(type("hello"))
+print(type(print))
+print(type(true))
+print(type(32.0))
+print(type(nil))
+#+END_SRC
+
+nil: 是一种类型, 用于表示"无效值", 一个变量在第一次赋值前的默认值是 nil,
+将 nil 赋予给一个全局变量就等同于删除它.
+Openresty的lua接口还提供了ngx.null, 用于表示不同于nil的特殊空值.
+
+boolean: 可选值为true/false, lua中nil和false为"假", 其他情况都为"真".
+
+number: 用于表示实数, 与c/c++中的double类型相似.可以使用math.floor(向下取整),
+math.ceil(向上取整)进行取整操作.
+一般地,Lua 的 number 类型就是用双精度浮点数来实现的.值得一提的是,
+LuaJIT 支持所谓的"dual-number"(双数)模式,即 LuaJIT 会根据上下文用整型来存储整数,
+而用双精度浮点数来存放浮点数. LuaJIT还支持"长长整形"的大数(在x86_64体系结构上
+则是64bit整数).
+
+string: 三种方式表示, 'Hello', "Hello", 还可以用方括号来表示.
+#+BEGIN_SRC text
+[[]], 把两个正的方括号(即[[)间插入 n 个等号定义为第 n 级正长括号,
+就是说,0 级正的长括号写作[[ , 一级正的长括号写作 [=[ ,如此等等,
+反的长括号也作类似定义.
+一个长字符串可以由任何一级的正的长括号开始,而由第一个碰到的同级反的长括号结束.
+整个词法分析过程将不受分行限制,不处理任何转义符,并且忽略掉任何不同级别的长括号.
+这种方式描述的字符串可以包含任何东西,当然本级别的反长括号除外.
+Lua 的字符串是不可改变的值, 也不能通过下标来访问字符串的某个字符,
+而是根据修改要求来创建一个新的字符串.
+
+在 Lua 实现中,Lua 字符串一般都会经历一个"内化"(intern)的过程,
+即两个完全一样的 Lua 字符串在 Lua 虚拟机中只会存储一份.
+每一个 Lua 字符串在创建时都会插入到 Lua 虚拟机内部的一个全局的哈希表中.
+因此: 创建相同的 Lua 字符串并不会引入新的动态内存分配操作,所以相对便宜(
+但仍有全局哈希表查询的开销), 内容相同的 Lua 字符串不会占用多份存储空间,
+已经创建好的 Lua 字符串之间进行相等性比较时是 O(1) 时间度的开销,而不是通常见到的 O(n)
+#+END_SRC
+
+table: 实现了一种抽象的"关联数组", 可以是除 nil 以外的任意类型的值
+#+BEGIN_SRC lua
+local corp = {
+  web = "www.google.com", -- 索引为字符串, key="web"
+  staff = {"jack", "demon"}, -- 值是一个表
+  100876, -- 相当于[1]=100876
+  100191, -- [2]=100191
+  [10] = 360, -- 直接给出数字索引
+  ["city"] = "Beijing" -- 索引为字符串
+}
+
+#+END_SRC
+
+function: 函数也是一种数据类型, 可以存储在变量中,可以通过参数传递给其他函数,
+还可以作为其他函数的返回值.
+有名函数的定义本质上是匿名函数对变量的赋值, 例如:
+#+BEGIN_SRC lua
+function goo()
+end
+-- 等价于
+goo = function()
+end
+
+local function foo()
+end
+
+-- 等价于
+local foo = function()
+end
+#+END_SRC
+
+*** 表达式
+lua中的除法是实数的除法, ~=表示不等于
+在使用"=="做等于判断时,要注意对于 table, userdate 和函数,
+Lua 是作引用比较的,即只有当两个变量引用同一个对象时,才认为它们相等.
+由于lua字符串总是会被"内化", Lua 字符串之间的相等性比较可以简化为其内部存储地址的比较.
+这意味着 Lua 字符串的相等性比较总是为 O(1).
+
+所有逻辑操作符将false 和 nil 视作假,其他任何值视作真,
+对于 and 和 or,"短路求值",对于not,永远只返回 true 或者 false.
+
+字符串连接: 使用"..", 如果其任意一个操作数是数字的话,Lua 会将这个数字转换成字符串.
+注意,连接操作符只会创建一个新字符串,而不会改变原操作数,
+也可以使用 string 库函数 string.format 连接字符串.
+字符串连接运算符几乎总会创建一个新的(更大的)字符串, 如果需要连接很多字符串,
+推荐使用table和table.concat()来进行很多字符串的拼接, 如:
+#+BEGIN_SRC lua
+local pieces = {}
+for i, elem in ipairs(my_list) do
+  pieces[i] = my_process(elem)
+end
+
+local res = table.concat(pieces)
+
+-- 该例子中还可以使用LuaJIT独有的table.new来恰当的初始化pieces表的空间,
+-- 以避免该表的动态生长.
+#+END_SRC
+
+*** 控制结构
+lua提供的控制结构有: if, while, repeat, for并提供break.
+#+BEGIN_SRC lua
+-- if
+score = 90
+if score == 100 then
+  print(100)
+elseif score >= 60 then
+  print(">=60")
+else
+  print("sorry")
+end
+-- elseif是连在一起写的, 如果分开则相当于else里嵌套了一个if
+
+-- while
+while 表达式 do
+--body
+end
+-- lua不提供continue这样的控制语句来立即进入下一个循环迭代.因此需要仔细安排循环.
+-- 但提供了break, 可以跳出循环.
+
+
+-- repeat, 类似其他语言的do-while, 但控制方式相反,
+-- 执行 repeat 循环体后，直到 until 的条件为真时才结束
+-- 以下代码将形成一个死循环.
+x = 10
+repeat
+  print(x)
+until false
+
+
+-- for: 两种形式: 数字for, 范围for
+-- 数字for
+for var=begin, finish, step do 
+  --body
+end
+-- 数字for: var 从 begin 变化到 finish，每次变化都以 step 作为步长递增 var 
+-- begin、 finish、 step 三个表达式只会在循环开始时执行一次
+-- 第三个表达式 step 是可选的， 默认为1
+-- 控制变量 var 的作用域仅在 for 循环内，需要在外面控制，则需将值赋给一个新的变量 
+-- 循环过程中不要改变控制变量的值，那样会带来不可预知的影响
+-- 如果不想给循环设置上限, 可以使用常量math.huge
+for i=1, math.huge do 
+  -- body
+end
+
+-- 范围for: 通过一个迭代器函数来遍历所有值
+local a = {"a", "b", "c", "d"}
+for i, v in ipairs(a) do
+  print("index:", i, " value:", v)
+end
+-- ipairs，这是一个用于遍历数组的迭代器函数。在每次循环中，i 会被赋予一个索引值，
+-- 同时 v 被赋予一个对应于该索引的数组元素值
+-- 标准库提供了几种迭代器，包括用于迭代文件中每行的（io.lines）、 迭代 table 元素的（pairs）
+-- 迭代数组元素的（ipairs）、迭代字符串中单词的（string.gmatch）。
+-- 范围for中, 循环变量是循环体的局部变量, 决不应该对循环变量作任何赋值
+-- 在luajit2.1中, ipairs() 内建函数是可以被 JIT 编译的，而 pairs() 则只能被解释执行
+-- 事实上，即使未来 pairs 可以被 JIT 编译，哈希表的遍历本身也不会有数组遍历那么高效。
+
+-- return: 只能写在语句块的最后，一旦执行了 return 语句，该语句之后的所有语句都不会再执行。
+-- 若要写在函数中间，则只能写在一个显式的语句块内
+-- 有时候为了方便调试, 想在某个函数的中间提前 return，以进行控制流的短路。
+-- 此时我们可以将 return 放在一个 do ... end 代码块中
+local function foo()
+  print("before")
+  do return end
+  print("after") -- 这一行语句就不会被执行
+end
+#+END_SRC
+
+*** 函数
+由于全局变量一般会污染全局名字空间,同时也有性能损耗(即查询全局环境表的开销),
+因此应当尽量使用"局部函数"，其记法是类似的，只是开头加上 local 修饰符.
+#+BEGIN_SRC lua
+local function max(a, b)
+  local tmp = nil
+  if (a > b) then
+    tmp = a
+  else
+    tmp = b
+  end
+  return tmp
+end
+
+-- 也可以把函数名替换为某个 Lua 表的某个字段
+function foo.bar(a, b, c)
+  -- body
+end
+-- 等价于
+foo.bar = function(a, b, c)
+  -- body
+end
+-- 此种形式的函数定义,不能再使用 local 修饰符了,因为不存在定义新的局部变量了
+#+END_SRC
+
+参数的传递: Lua 函数的参数大部分是按值传递的
+在调用函数的时候,若形参个数和实参个数不同时,Lua 会自动调整实参个数.
+调整规则:若实参个数大于形参个数,从左向右,多余的实参被忽略;
+若实参个数小于形参个数,从左向右,没有被实参初始化的形参会被初始化为 nil
+#+BEGIN_SRC lua
+local x = 1
+local y = 2
+local z = 3
+local function foo1(a, b)
+  print(a, b)
+end
+
+local function foo2(a, b, c, d)
+  print(a, b, c, d)
+end
+foo1(x, y, z) -- z被忽略,
+foo2(x, y, z) -- 参数变成 x, y, z, nil
+#+END_SRC
+
+变长参数: 使用"...", 访问变长参数时也需要使用"...".
+#+BEGIN_SRC lua
+local function func(...)
+  local tmp = {...}
+  local ans = table.concat(tmp, " ")
+  print(ans)
+end
+-- LuaJIT 2 尚不能 JIT 编译这种变长参数的用法，只能解释执行。
+-- 所以对性能敏感的代码，应当避免使用此种形式
+#+END_SRC
+
+具名参数: 这时候要把所有的实参组织到一个 table 中，并将这个 table 作为唯一的实参传给函数
+#+BEGIN_SRC lua
+local function change(arg)
+  arg.width = arg.width * 2
+  arg.height = arg.height * 2
+  return arg
+end
+local rectangle = {width = 20, height = 15 }
+print("before", rectangle.width, rectangle.height)
+change(rectangle)
+print("after", rectangle.width, rectangle.height)
+-- 可以看到在调用change函数后, rectangle的值也发生了变化
+#+END_SRC
+在常用基本类型中,除了 table 是按址传递类型外,其它的都是按值传递参数.
+用全局变量来代替函数参数的不好编程习惯应该被抵制,良好的编程习惯应该是减少全局变量的使用.
+
+函数返回值: 可以返回多个值.
+当函数返回值的个数和接收返回值的变量的个数不一致时，Lua 也会自动调整参数个数
+调整规则: 若返回值个数大于接收变量的个数,多余的返回值会被忽略掉;
+若返回值个数小于参数个数,从左向右,没有被返回值初始化的变量会被初始化为 nil.
+
+当一个函数有一个以上返回值,且函数调用不是一个列表表达式的最后一个元素,
+那么函数调用只会产生一个返回值,也就是第一个返回值, 例如:
+#+BEGIN_SRC lua
+local function init()
+  return 1, "lua"
+end
+
+local x, y, z = init(), 2 -- x=1, y=2, z=nil
+local a, b, c = 2, init() -- a=2, b=1, c="lua"
+
+-- 函数调用的实参列表也是一个列表表达式, 因此
+print(init(), 2) -- 1, 2
+print(2, init()) -- 2, 1, lua
+
+-- 如果确保只取函数返回值的第一个值, 可以使用括号运算
+print(2, (init())) -- 2, 1
+-- 如果实参列表中某个函数会返回多个值，同时调用者又没有显式地使用括号运算符来筛选和过滤
+-- 则这样的表达式是不能被 LuaJIT 2 所 JIT 编译的，而只能被解释执行
+#+END_SRC
+
+全动态函数调用: 调用回调函数, 并把一个数组参数作为回调函数的参数.
+#+BEGIN_SRC lua
+-- 形如
+local args={...} or {}
+method_name(unpack(args, 1, table.maxn(args)))
+
+-- 如果实参table中确定没有nil空洞, 则可以简化为
+method_name(unpack(args))
+
+-- 使用场景
+-- 调用的函数参数是未知的, 函数的实际参数的类型和数目也都是未知的
+-- unpack 内建函数还不能为 LuaJIT 所 JIT 编译，因此这种用法总是会被解释执行。
+-- 对性能敏感的代码路径应避免这种用法
+-- 例子:
+local function run(x, y)
+  print('run', x, y)
+end
+
+local function attack(targetId)
+  print('targetId', targetId)
+end
+
+local function do_action(method, ...)
+  local args = {...} or {}
+  method(unpack(args, 1, table.manx(args)))
+end
+
+do_action(run, 1, 2)
+do_action(attack, 11)
+#+END_SRC
+
+*** 模块
+Lua5.1添加了对模块和包的支持.
+一个 Lua 模块的数据结构是用一个 Lua 值(通常是一个 Lua 表或者 Lua 函数).
+一个 Lua 模块代码就是一个会返回这个 Lua 值的代码块.
+可以使用内建函数 require() 来加载和缓存模块.
+
+要加载一个模块,只需要简单地调用 require "file"就可以了,file 指模块所在的文件名.
+这个调用会返回一个由模块函数组成的 table,并且还会定义一个包含该 table 的全局变量.
+
+在 Lua 中创建一个模块最简单的方法是:创建一个 table,并将所有需要导出的函数放入其中,
+最后返回这个 table 就可以了.
+#+BEGIN_SRC lua
+-- filename: demon.lua
+local foo={}
+local function getname()
+  return "demon"
+end
+
+function foo.greeting()
+  print("Hello" .. getname())
+end
+
+return foo
+-- 对于需要导出给外部使用的公共模块，处于安全考虑，是要避免全局变量的出现。
+-- 可以使用 lua-releng 工具完成全局变量的检测.
+#+END_SRC
+*** string库
+字符串库中的所有函数都导出在模块 string 中.
+在 Lua 5.1 中,它还将这些函数导出作为 string 类型的方法.
+ans = string.upper(s) <==> ans = s:upper(), 为了避免
+与之前的版本不兼容, 建议使用ans = string.upper(s)
+
+Lua 字符串总是由字节构成的.Lua 核心并不尝试理解具体的字符集编码
+(比如 GBK 和 UTF-8 这样的多字节字符编码).
+
+string.byte(s[, i[, j]]): 返回s[i], s[i+1], ..., s[j]所对应的ASCII
+i的默认值是1, j的默认值是i.
+#+BEGIN_SRC lua
+print(string.byte("abc", 1, 3)) -- i=1, j=3
+print(string.byte("abc", 3)) -- i=3, j=3
+pirnt(string.byte("abc")) -- i=1, j=1
+#+END_SRC
+由于 string.byte 只返回整数,而并不像 string.sub 等函数那样(尝试)创建新的 Lua 字符串,
+因此使用 string.byte 来进行字符串相关的扫描和分析是最为高效的,
+尤其是在被 LuaJIT 2 编译之后.
+
+string.char(...):接受0个或更多的整数,返回这些整数所对应的 ASCII 码字符组成的字符串,
+当参数为空时,默认是一个 0.
+此函数特别适合从具体的字节构造出二进制字符串.
+比使用 table.concat 函数和 .. 连接运算符更加高效.
+
+string.upper(s), string.lower(s), string.len(s): 返回字符串的长度, 此函数不推荐,
+应当总是使用"#"运算符来获取lua字符串的长度. lua字符串的长度是专门存放的, 其时间复杂度
+为O(1).
+
+string.find(s, p[, init[, plain]]): 在s字符串中第一次匹配 p 字符串,若匹配成功,
+则返回 p 字符串在 s 字符串中出现的开始位置和结束位置;
+若匹配失败,则返回 nil. 第三个参数 init 默认为 1,并且可以为负整数,当 init 为负数时,
+表示从 s 字符串的 string.len(s) + init 索引处开始向后匹配字符串 p.
+第四个参数默认为 false，当其为 true 时，只会把 p 看成一个字符串对待.
+对于 LuaJIT 这里有个性能优化点,对于 string.find 方法,当只有字符串查找匹配时,
+是可以被 JIT 编译器优化的.
+#+BEGIN_SRC lua
+local find = string.find
+
+print(find("abc cba", "ab"))
+
+#+END_SRC
+
+string.format(formatstring, ...):按照格式化参数 formatstring,返回后面 ... 内容的格式化版本
+格式化字符串的规则与标准 c 语言中 printf 函数的规则基本相同.
+
+string.match(s, p[, init]): 在字符串s中匹配字符串p.匹配成功,则返回目标字符串中与模式匹配的子串,否则返回nil.
+第三个参数 init 默认为 1,并且可以为负整数,当 init 为负数时,表示从 s 字符串的 string.len(s) + init
+索引处开始向后匹配字符串 p.
+string.match 目前并不能被 JIT 编译,应尽量使用 ngx_lua 模块提供的 ngx.re.match 等接口.
+
+string.gmatch(s, p): 返回一个迭代器函数,通过这个迭代器函数可以遍历到在字符串s中出现模式串p的所有地方.
+#+BEGIN_SRC lua
+s = "hello world from lua"
+for w in string.gmatch(s, "%a+") do -- 匹配最长连续且只含字母的字符串
+  print(w)
+end
+
+t = {}
+s = "from=world, to=Lua"
+for k, v in string.gmatch(s, "(%a+)=(%a+)") do  --匹配两个最长连续且只含字母的
+    t[k] = v                                    --字符串，它们之间用等号连接
+end
+for k, v in pairs(t) do
+print (k,v)
+end
+#+END_SRC
+此函数目前并不能被 LuaJIT 所 JIT 编译，而只能被解释执行
+
+string.rep(s, n): 返回字符s的n次拷贝
+string.sub(s, i [, j]): 返回字符串 s 中,索引 i 到索引 j 之间的子字符串.
+当 j 缺省时,默认为 -1,也就是字符串 s 的最后位置. i 可以为负数。
+当索引 i 在字符串 s 的位置在索引 j 的后面时，将返回一个空字符串.
+如果你只是想对字符串中的单个字节进行检查,使用 string.char 函数通常会更为高效.
+
+string.gsub(s, p, r [, n]): 将目标字符串 s 中所有的子串 p 替换成字符串 r。
+可选参数 n，表示限制替换次数。返回值有两个，第一个是被替换后的字符串，第二个是替换了多少次.
+此函数不能为 LuaJIT 所 JIT 编译，而只能被解释执行.
+一般我们推荐使用 ngx_lua 模块提供的 ngx.re.gsub 函数.
+
+string.reverse(s): 接收一个字符串s，返回这个字符串的反转
+
+*** table库
+table 库是由一些辅助函数构成的，这些函数将 table 作为数组来操作。
+在初始化一个数组的时候，若不显式地用键值对方式赋值，则会默认用数字作为下标，从 1 开始。
+由于在 Lua 内部实际采用哈希表和数组分别保存键值对、普通值，所以不推荐混合使用这两种赋值方式.
+
+当我们把 table 当作栈或者队列使用的时候，容易犯错，追加到 table 的末尾用的是
+s[#s+1] = something,如果这个 something 是一个 nil 的话，
+会导致这一次压栈（或者入队列）没有存入任何东西，#s 的值没有变。
+如果 s = { 1, 2, 3, 4, 5, 6 }，你令s[ 4] = nil，#s 会令你"匪夷所思"地变成 3(luajit中)，
+lua5.1中任然是6
+
+table.getn 获取长度: 取长度操作符写作一元操作 #。 字符串的长度是它的字节数
+(就是以一个字符一个字节计算的字符串长度).
+
+常规的数组里面从 1 到 n 放着一些非空的值的时候.它的长度就精确的为 n,即最后一个值的下标.
+如果数组有一个"空洞"(就是说nil 值被夹在非空值之间),那么 #t 可能是指向任何一个是 nil
+值的前一个位置的下标(就是说，任何一个nil 值都有可能被当成数组的结束).
+这也就说明对于有"空洞"的情况,table 的长度存在一定的不可确定性.
+#+BEGIN_SRC lua
+local tblTest1 = {1, a=2, 3}
+print("Test1 len " .. table.getn(tblTest1))
+print("Test1 #len " .. #tblTest1)
+
+local tblTest2 = {1, nil}
+print("Test2 len " .. table.getn(tblTest2))
+
+local tblTest3 = {1, nil, 2}
+print("Test3 len " .. table.getn(tblTest3))
+
+local tblTest4 = { 1, nil, 2, nil }
+print("Test4 len " .. table.getn(tblTest4))
+
+local tblTest5 = { 1, nil, 2, nil, 3, nil }
+print("Test5 len " .. table.getn(tblTest5))
+
+local tblTest6 = { 1, nil, 2, nil, 3, nil, 4, nil }
+print("Test6 len " .. table.getn(tblTest6))
+
+local tblTest7 = { 1, nil, 2, 3, nil, 3, nil, 4, nil, 5, nil, 6}
+print("Test7 len " .. table.getn(tblTest7))
+#+END_SRC
+不要在 lua 的 table 中使用 nil 值，如果一个元素要删除，直接 remove，不要用 nil 去代替
+
+table.concat (table [, sep [, i [, j ] ] ]):
+对于元素是 string 或者 number 类型的表 table,
+返回table[i]..sep..table[i+1] ··· sep..table[j] 连接成的字符串。
+填充字符串 sep 默认为空白字符串。起始索引位置 i 默认为 1，结束索引位置 j 默认是 table 的长度。
+如果 i 大于 j，返回一个空字符串
+
+table.insert (table, [pos ,] value): 在(数组型)表 table 的 pos 索引位置插入 value，
+其它元素向后移动到空的地方.pos 的默认值是表的长度加一，即默认是插在表的最后.
+
+table.maxn(table): 返回(数组型)表 table 的最大索引编号,如果此表没有正的索引编号,返回 0.
+当长度省略时，此函数通常需要 O(n) 的时间复杂度来计算 table 的末尾。
+因此用这个函数省略索引位置的调用形式来作 table 元素的末尾追加，是高代价操作.
+此函数的行为不同于 # 运算符，因为 # 可以返回数组中任意一个 nil 空洞或最后一个 nil 
+之前的元素索引。当然，该函数的开销相比 # 运算符也会更大一些.
+
+table.remove (table [, pos]): 在表 table 中删除索引为 pos(pos 只能是 number 型)的元素，
+并返回这个被删除的元素，它后面所有元素的索引值都会减一。pos 的默认值是表的长度，
+即默认是删除表的最后一个元素.
+
+table.sort (table [, comp]): 按照给定的比较函数 comp 给表 table 排序,
+比较函数有两个参数，如果希望第一个参数排在第二个的前面，就应该返回 true，否则返回 false.
+如果比较函数 comp 没有给出，默认从小到大排序
+#+BEGIN_SRC luajit
+local function compare(x, y) -- 从大到小排序
+   return x > y
+end
+
+local a = {1, 7, 3, 4, 25}
+table.sort(a)
+print(a[1], a[2], a[3], a[4], a[5])
+table.sort(a, compare) --使用比较函数进行排序
+print(a[1], a[2], a[3], a[4], a[5])
+
+#+END_SRC
+LuaJIT 2.1 新增加的 table.new 和 table.clear 函数是非常有用的。
+前者主要用来预分配 lua table 空间，后者主要用来高效的释放 table 空间，
+并且它们都是可以被 JIT 编译的.
+
+*** 时间函数
+lua中自带time,date, difftime等日期功能
+在openresty中不推荐使用这些函数, 原因是这些函数会引发不止一个昂贵的系统调用，
+同时无法为 LuaJIT JIT 编译.
+推荐使用 ngx_lua 模块提供的带缓存的时间接口，
+如 ngx.today, ngx.time, ngx.utctime, ngx.localtime, ngx.now, ngx.http_time
+以及 ngx.cookie_time 等.
+
+os.time([table]): 
+如果不使用参数 table 调用 time 函数，它会返回当前的时间和日期(它表示从某一时刻到现在的秒数).
+如果用 table 参数,它会返回一个数字,表示该 table 中 所描述的日期和时间
+(它表示从某一时刻到 table 中描述日期和时间的秒数).table 的字段如下:
+year: 四位数字, month:1~12, day:1~31, hour:0~23, min: 0~59, sec: 0~61,
+isdst: boolean, true表示夏令时
+如果要传递table参数, 则year,month, day是不能少的, 其他字段默认是12:00:00
+#+BEGIN_SRC lua
+print(os.time())
+
+a = { year = 1970, month = 1, day = 1, hour = 8, min = 1 }
+-- 转换为utc标准时间, 不带时区
+print(os.time(a)) --> 60
+#+END_SRC
+
+os.difftime(t2, t1): 返回t1到t2的时间差, 单位是秒
+os.date([format[, time]]): 把一个表示日期和时间的数值，转换成更高级的表现形式。
+其第一个参数 format 是一个格式化字符串，描述了要返回的时间形式。
+第二个参数 time 就是日期和时间的数字表示，缺省时默认为当前的时间。
+使用格式字符 "*t"，创建一个时间表.
+#+BEGIN_SRC lua
+local tab1 = os.date("*t")  --返回一个描述当前日期和时间的表
+local ans1 = "{"
+for k, v in pairs(tab1) do  --把tab1转换成一个字符串
+    ans1 = string.format("%s %s = %s,", ans1, k, tostring(v))
+end
+
+ans1 = ans1 .. "}"
+print("tab1 = ", ans1)
+
+-- 会自己带上时区
+local tab2 = os.date("*t", 60)  --返回一个描述日期和时间数为60秒的表
+local ans2 = "{"
+for k, v in pairs(tab2) do      --把tab2转换成一个字符串
+    ans2 = string.format("%s %s = %s,", ans2, k, tostring(v))
+end
+
+ans2 = ans2 .. "}"
+print("tab2 = ", ans2)
+#+END_SRC
+
+os.date 函数会将相应的标记位以时间信息进行填充:
+%a	一星期中天数的简写（例如：Wed）
+%A	一星期中天数的全称（例如：Wednesday）
+%b	月份的简写（例如：Sep）
+%B	月份的全称（例如：September）
+%c	日期和时间（例如：07/30/15 16:57:24）
+%d	一个月中的第几天[01 ~ 31]
+%H	24小时制中的小时数[00 ~ 23]
+%I	12小时制中的小时数[01 ~ 12]
+%j	一年中的第几天[001 ~ 366]
+%M	分钟数[00 ~ 59]
+%m	月份数[01 ~ 12]
+%p	"上午（am）"或"下午（pm）"
+%S	秒数[00 ~ 59]
+%w	一星期中的第几天[1 ~ 7 = 星期天 ~ 星期六]
+%x	日期（例如：07/30/15）
+%X	时间（例如：16:57:24）
+%y	两位数的年份[00 ~ 99]
+%Y	完整的年份（例如：2015）
+%%	字符'%'
+*t 同os.time
+#+BEGIN_SRC lua
+print(os.date("today is %A, in %B"))
+print(os.date("now is %x %X"))
+#+END_SRC
+*** 数学库
+使用math.random() 函数获得伪随机数时,如果不使用 math.randomseed()
+设置伪随机数生成种子或者设置相同的伪随机数生成种子,那么得得到的伪随机数序列是一样的.
+*** 文件操作
+Lua I/O库提供两种不同的方式处理文件: 隐式文件描述和显式文件描述符
+这些文件 I/O 操作,在 OpenResty 的上下文中对事件循环是会产生阻塞效应.
+实际中的应用,在 OpenResty 项目中应尽可能让网络处理部分、文件 I/0 操作部分相互独立,
+不要揉和在一起.
+
++ 隐式文件描述符
+  设置一个默认的输入或输出文件,然后在这个文件上进行所有的输入或输出操作.
+  所有的操作函数由 io 表提供.
+  #+BEGIN_SRC lua
+file = io.input("test.txt")  -- 打开文件
+
+repeat
+   line = io.read() -- 逐行读取内容, 文件结束返回nil
+   if nil == line then
+      break
+   end
+   print(line)
+until(false)
+   
+file = io.open("test.txt", "a+") -- 以追加方式打开文件
+io.output(file) -- 使用io.output函数, 设置默认输出文件
+io.write("\nhello world")
+io.close(file)
+  #+END_SRC
+
++ 显式文件描述符
+  使用files:XXX()函数方式进行操作,其中 files 为 io.open() 返回的文件句柄
+  #+BEGIN_SRC lua
+file = io.open("test.txt", "r") -- 以只读模式打开
+for line in file:lines() do
+   print(line)
+end
+
+file:close()
+
+file = io.open("test.txt", "a") -- 以添加模式打开
+file:write("\n显式添加内容")
+file:close()
+  
+  #+END_SRC
+
+文件操作函数:
+io.open(filename[, mode]): 按指定的模式 mode，打开一个文件名为 filename 的文件，
+成功则返回文件句柄，失败则返回 nil 加错误信息.
+"r"	读模式 (默认)	返回nil加错误信息
+"w"	写模式	创建文件
+"a"	添加模式	创建文件
+"r+"	更新模式，保存之前的数据	返回nil加错误信息
+"w+"	更新模式，清除之前的数据	创建文件
+"a+"	添加更新模式，保存之前的数据,在文件尾进行添加	创建文件
+模式字符后可以加一个'b', 用于在某些系统中打开二进制文件.
+
+"w" 表示文本文件, Windows 的文件系统在写文件时，会在文件中 0x0A 的前面加上 0x0D。
+使用 "w"，其属性要看所在的平台.
+"wb" 表示二进制文件.文件系统会按纯粹的二进制格式进行写操作,因此也就不存在格式转换的问题
+（Linux 文件系统下 "w" 和 "wb" 没有区别）.
+
+f_handle:close(): 关闭文件, 当文件句柄被垃圾收集后, 文件将自动关闭.句柄将变为一个不可预知的值
+io.close([file]):关闭文件没有file 时，关闭默认输出文件。
+f_handle:flush(): 把写入缓冲区的所有数据写入到文件 f_handle 中
+io.flush(): 把写入缓冲区的所有数据写入到默认输出文件
+io.input([file]): 当使用一个文件名调用时，打开这个文件（以文本模式），
+并设置文件句柄为默认输入文件； 当使用一个文件句柄调用时，设置此文件句柄为默认输入文件； 
+当不使用参数调用时，返回默认输入文件句柄.
+
+f_handle:lines(): 返回一个迭代函数,每次调用将获得文件中的一行内容,当到文件尾时，将返回 nil，但不关闭文件
+io.lines([filename]): 打开指定的文件 filename 为读模式并返回一个迭代函数,
+每次调用将获得文件中的一行内容,当到文件尾时，将返回 nil，并自动关闭文件。
+若不带参数时 io.lines() 等价于 io.input():lines() 读取默认输入设备的内容，结束时不关闭文件.
+io.output([file]): 类似io.input, 但操作是在默认输出文件上
+f_handle:read(...): 按指定的格式读取一个文件。按每个格式将返回一个字符串或数字,
+如果不能正确读取将返回 nil，若没有指定格式将指默认按行方式进行读取。
+格式:
+"*n"	读取一个数字
+"*a"	从当前位置读取整个文件。若当前位置为文件尾，则返回空字符串
+"*l"	读取下一行的内容。若为文件尾，则返回nil。(默认)
+number	读取指定字节数的字符。若为文件尾，则返回nil。如果number为0,则返回空字符串，若为文件尾,则返回nil
+io.read(...) <=> io.input():read
+io.byte(obj): 检测 obj 是否一个可用的文件句柄。如果 obj 是一个打开的文件句柄，
+则返回 "file" 如果 obj 是一个已关闭的文件句柄，则返回 "closed file" 
+如果 obj 不是一个文件句柄，则返回 nil.
+f_handle:write(...): 把每一个参数的值写入文件。参数必须为字符串或数字，若要输出其它值，则需通过 tostring 或 string.format 进行转换
+io.write() <==> io.output():write
+
+f_handle:seek([whence][, offset]):设置和获取当前文件位置，成功则返回最终的文件位置(按字节，相对于文件开头),
+失败则返回 nil 加错误信息。缺省时，whence 默认为 "cur"，offset 默认为 0。 
+参数 whence：
+"set"	文件开始
+"cur"	文件当前位置(默认)
+"end"	文件结束
+
+f_handle:setvbuf(mode[,size]):设置输出文件的缓冲模式。模式：
+"no"	没有缓冲，即直接输出
+"full"	全缓冲，即当缓冲满后才进行输出操作(也可调用flush马上输出)
+"line"	以行为单位，进行输出
+最后两种模式，size 可以指定缓冲的大小（按字节），忽略 size 将自动调整为最佳的大小
+** lua高阶
+*** 元表
+https://moonbingbing.gitbooks.io/openresty-best-practices/content/lua/metatable.html
+在 Lua 5.1 语言中，元表 (metatable) 的表现行为类似于 C++ 语言中的操作符重载。
+可以重载 "__add" 元方法 (metamethod) ，来计算两个 Lua 数组的并集；
+或者重载 "__index" 方法，来定义我们自己的 Hash 函数。
+Lua 提供了两个十分重要的用来处理元表的方法，如下：
+setmetatable(table, metatable)：此方法用于为一个表设置元表。
+getmetatable(table)：此方法用于获取表的元表对象。
+#+BEGIN_SRC lua
+local mytable = {}
+local mymetatable = {}
+setmetatable(mytable, mymetatable)
+
+-- 以上代码等价于
+local mytable = setmetatable({}, {})
+
+-- 重载__add方法来计算集合的并集
+local set1 = {10, 20, 30}
+local set2 = {20, 40, 50}
+
+-- 将用于重载__add的函数, 第一个参数是self
+local union = function(self, another)
+   local set = {}
+   local result = {}
+   -- 利用数组来确保集合的互异性
+   for i, j in pairs(self) do set[j] = true end
+   for i, j in pairs(another) do set[j] = true end
+
+   -- 加入结果集合
+   for i, j in pairs(set) do table.insert(result, i) end
+   return result
+end
+
+setmetatable(set1, {__add = union}) -- 重载set1的__add元方法.
+local set3 = set1 + set2
+for _, j in pairs(set3) do
+   io.write(j .. " ")
+end
+
+-- __index: 取下标操作用于访问 table[key]
+mytable = setmetatable({key1 = "value1"},   --原始表
+  {__index = function(self, key)            --重载函数
+    if key == "key2" then
+      return "metatablevalue"
+    end
+  end
+})
+
+print(mytable.key1,mytable.key2)
+
+-- 一个高阶用法是:
+t = setmetatable({[1] = "hello"}, {__index = {[2] = "world"}})
+print(t[1], t[2])
+-- 先是把 {__index = {}} 作为元表，但 __index 接受一个表，而不是函数，
+-- 这个表中包含 [2] = "world" 这个键值对。 所以当 t[2] 去在自身的表中找不到时，
+-- 在 __index 的表中去寻找，然后找到了 [2] = "world" 这个键值对.
+
+-- __call元方法, 使得普通的表也可以被调
+functor = {}
+function func1(self, arg)
+  print ("called from", arg)
+end
+
+setmetatable(functor, {__call = func1})
+
+functor("functor")  --> called from functor
+print(functor)
+
+-- __metatable元方法
+-- 保护我们的对象使其使用者既看不到也不能修改 metatables。
+-- 我们可以对 metatable 设置了 __metatable 的值， getmetatable 将返回这个域的值， 
+-- 而调用 setmetatable 将会出错
+Object = setmetatable({}, {__metatable = "You cannot access here"})
+
+print(getmetatable(Object)) --> You cannot access here
+setmetatable(Object, {})    --> 引发编译器报错
+#+END_SRC
+
+*** Lua面向对象编程
+https://moonbingbing.gitbooks.io/openresty-best-practices/content/lua/object_oriented.html
+使用表和函数实现面向对象, 将函数和相关的数据放置于同一个表中就形成了一个对象.
+
+成员私有性: 动态语言中引入成员私有性并没有太大的必要，反而会显著增加运行时的开销,
+下面的技巧把对象作为各方法的 upvalue，本身是很巧妙的，但会让子类继承变得困难,
+同时构造函数动态创建了函数，会导致构造函数无法被 JIT 编译.
+#+BEGIN_SRC lua
+function newAccount (initialBalance)
+    local self = {balance = initialBalance}
+    local withdraw = function (v)
+        self.balance = self.balance - v
+    end
+    local deposit = function (v)
+        self.balance = self.balance + v
+    end
+    local getBalance = function () return self.balance end
+    return {
+        withdraw = withdraw,
+        deposit = deposit,
+        getBalance = getBalance
+    }
+end
+
+a = newAccount(100)
+a.deposit(100)
+print(a.getBalance())
+print(a.balance)
+#+END_SRC
+*** 局部变量
+在一个 block 中的变量，如果之前没有定义过，那么认为它是一个全局变量，而不是这个 block 的局部变量
+使用局部变量的好处:
+1.局部变量可以避免因为命名问题污染了全局环境
+2.local变量的访问比全局变量更快
+3.由于局部变量出了作用域之后生命周期结束，这样可以被垃圾回收器及时释放
+
+可以使用工具lua-relang来检测当前目录或某个文件是否有全局变量,
+安装:
+curl -L https://github.com/openresty/openresty-devel-utils/raw/master/lua-releng > /which/path
+chmod +x /whicn/path/lua-relang
+使用: 可以在含有lua文件的目录中执行: lua-relang即可.
+
+最好是在书写lua文件时, 在文件头添加 local _M = {_VERSION='xx'}
+
+*** 判断数组大小
+table.getn(t) 等价于 #t 但计算的是数组元素，不包括 hash 键值。而且数组是以第一个 nil 元素来判断数组结束。
+#只计算 array 的元素个数，它实际上调用了对象的 metatable 的__len函数。
+对于有 __len 方法的函数返回函数返回值，不然就返回数组成员数目。
+
+Lua 中，数组的实现方式其实类似于 C++ 中的 map，对于数组中所有的值，都是以键值对的形式来存储
+(无论是显式还是隐式), Lua 内部实际采用哈希表和数组分别保存键值对、普通值，
+所以不推荐混合使用这两种赋值方式。尤其需要注意的一点是：Lua数组中允许 nil 值的存在，
+但是数组默认结束标志却是 nil。这类比于 C 语言中的字符串，字符串中允许 '\0' 存在，
+但当读到 '\0' 时，就认为字符串已经结束了.
+
+初始化是例外，在 Lua 相关源码中，初始化数组时首先判断数组的长度，若长度大于 0，并且最后一个值不为 nil，
+返回包括 nil 的长度；若最后一个值为 nil，则返回截至第一个非 nil 值的长度.
+
+*** 非空判断
+对于简单类型的变量，我们可以用 if (var == nil) then 这样的简单句子来判断
+要判断一个 table 是否为 {}，不能采用 #table == 0 的方式来判断。可以用下面这样的方法来判断：
+#+BEGIN_SRC lua
+function isTableEmpty(t)
+    if t == nil or next(t) == nil then
+        return true
+    else
+        return false
+    end
+end
+#+END_SRC
+注意：next 指令是不能被 LuaJIT 的 JIT 编译优化.
+
+*** 正则表达式
+在 OpenResty 中，同时存在两套正则表达式规范： Lua 语言的规范和 ngx.re.* 的规范。
+不建议使用 Lua 中的正则表达式。一是因为 Lua 中正则表达式的性能并不如 ngx.re.* 中的正则表达式优秀；
+二是 Lua 中的正则表达式并不符合 POSIX 规范，而 ngx.re.* 中实现的是标准的 POSIX 规范。
+ngx.re.* 中的正则表达式可以通过参数缓存编译过后的 Pattern。
+ngx.re.* 中的 o 选项，指明该参数，被编译的 Pattern 将会在工作进程中缓存，
+并且被当前工作进程的每次请求所共享。Pattern 缓存的上限值通过 lua_regex_cache_max_entries 来修改。
+#+BEGIN_SRC lua
+location /test {
+    content_by_lua_block {
+        local regex = [[\d+]]
+        -- 参数 "o" 是开启缓存必须的
+        local m = ngx.re.match("hello, 1234", regex, "o")
+        if m then
+            ngx.say(m[0])
+        else
+            ngx.say("not matched!")
+        end
+    }
+}
+#+END_SRC
+
+*** 不使用标准库
+no content
+
+*** 虚变量
+当一个方法返回多个值时，有些返回值有时候用不到，此时可以使用"_"来丢弃不需要的数据
+
+*** 抵制使用 module() 定义模块
+旧式的模块定义方式是通过 module("filename"[,package.seeall])*来显式声明一个包，
+现在官方不推荐再使用这种方式。这种方式将会返回一个由 filename 模块函数组成的 table ，
+并且还会定义一个包含该 table 的全局变量。
+module("filename", package.seeall) 这种写法是不提倡的，官方给出了两点原因：
+package.seeall 这种方式破坏了模块的高内聚，原本引入 "filename" 模块只想调用它的 foobar() 函数，
+但是它却可以读写全局属性，例如 "filename.os"。
+module 函数压栈操作引发的副作用，污染了全局环境变量。
+例如 module("filename") 会创建一个 filename 的 table ，并将这个 table 注入全局环境变量中，
+这样使得没有引用它的文件也能调用 filename 模块的方法.
+推荐示例:
+#+BEGIN_SRC lua
+-- square.lua 长方形模块
+local _M = {}           -- 局部的变量
+_M._VERSION = '1.0'     -- 模块版本
+
+local mt = { __index = _M }
+
+function _M.new(self, width, height)
+    return setmetatable({ width=width, height=height }, mt)
+end
+
+function _M.get_square(self)
+    return self.width * self.height
+end
+
+function _M.get_circumference(self)
+    return (self.width + self.height) * 2
+end
+
+return _M
+
+-- 引用示例
+local square = require "square"
+
+local s1 = square:new(1, 2)
+print(s1:get_square())          --output: 2
+print(s1:get_circumference())   --output: 6
+#+END_SRC
+当 lua_code_cache on 开启时，require 加载的模块是会被缓存下来的，这样我们的模块就会以最高效的方式运行，
+直到被显式地调用如下语句(这里有点像模块卸载):
+package.loaded["square"] = nil, 利用该特性可以执行代码热更新.
+但是如果在lua代码中使用dofile或loadfile来加载外部lua脚本, 则不会对其进行缓存, 因此建议使用require。
+
+*** 调用代码前需要先定义函数
+Lua module 只会在第一次请求时加载一次（除非显式禁用了 lua_code_cache 配置指令）
+
+*** 点号与冒号的区别
+冒号操作会带入一个self参数，用来代表自己。而点号操作，只是内容的展开
+#+BEGIN_SRC lua
+local str = "abcde"
+print("case 1:", str:sub(1, 2))
+print("case 2:", str.sub(str, 1, 2))
+#+END_SRC
+冒号的操作，只有当变量是类对象时才需要
+
+*** module
+在lua_code_cache off 情况下，缓存的代码会伴随请求完结而释放。module 的最大好处缓存这时候是无法发挥的。
+
+module的书写方式可以参考lua-resty-*中的代码, 这是非常正确的格式.
+
+*** FFI
+https://moonbingbing.gitbooks.io/openresty-best-practices/content/lua/FFI.html
+是 LuaJIT 中最重要的一个扩展库。它允许从纯 Lua 代码调用外部 C 函数，使用 C 数据结构.
+词汇库:
+cdecl	A definition of an abstract C type(actually, is a lua string)
+ctype	C type object
+cdata	C data object
+ct	C type format, is a template object, may be cdecl, cdata, ctype
+cb	callback object
+VLA	An array of variable length
+VLS	A structure of variable length
+
+lua ffi 库的 API，与 LuaJIT 不可分割
+
+在 lua 文件中使用 ffi 库的时候，必须要有下面的一行。
+local ffi = require "ffi"
+
+ffi.cdef: 声明 C 函数或者 C 的数据结构，数据结构可以是结构体、枚举或者是联合体，
+函数可以是 C 标准函数，或者第三方库函数，也可以是自定义的函数，注意这里只是函数的声明，
+并不是函数的定义。声明的函数应该要和原来的函数保持一致.
+所有使用的库函数都要对其进行声明，这和我们写 C 语言时候引入 .h 头文件是一样的.
+
+使用自定义函数的一个例子:
+#+BEGIN_SRC text
+先创建一个myffi.c文件
+int add(int x, int y) {
+  return x + y;
+}
+
+接下来在Linux下生成动态链接库
+gcc -g -o libmyffi.so -fpic -shared myffi.c
+
+为了方便测试，在 LD_LIBRARY_PATH 这个环境变量中加入了刚刚库所在的路劲，
+因为编译器在查找动态库所在的路径的时候其中一个环节就是在 LD_LIBRARY_PATH 这个环境变量中的所有路劲进行查找。
+命令如下所示:export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:your_lib_path
+
+在 lua 代码中要增加如下的行:
+ffi.load(name [,global])
+ffi.load 会通过给定的 name 加载动态库，返回一个绑定到这个库符号的新的 C 库命名空间，
+在 POSIX 系统中，如果 global 被设置为 ture，这个库符号被加载到一个全局命名空间。
+另外这个 name 可以是一个动态库的路径，那么会根据路劲来查找，否则的话会在默认的搜索路径中去找动态库。
+在 POSIX 系统中，如果在 name 这个字段中没有写上点符号 .，那么 .so 将会被自动添加进去，
+例如 ffi.load("z") 会在默认的共享库搜寻路劲中去查找 libz.so，在 windows 系统，如果没有包含点号，
+那么 .dll 会被自动加上.
+
+local ffi = require("ffi")
+local myffi = ffi.load('myffi')
+
+ffi.cdef[[
+int add(int x, int y);
+]]
+
+local res = myffi.add(1, 2)
+print(res)
+
+还能使用 ffi.C (调用 ffi.cdef 中声明的系统函数) 来直接调用 add 函数，
+记得要在 ffi.load 的时候加上参数 true，例如 ffi.load('myffi', true)
+
+local ffi = require("ffi")
+ffi.load('myffi',true)
+
+ffi.cdef[[
+int add(int x, int y);   /* don't forget to declare */
+]]
+
+local res = ffi.C.add(1, 2)
+print(res)
+#+END_SRC
+
+ffi.typeof: 创建一个 ctype 对象，会解析一个抽象的 C 类型定义
+#+BEGIN_SRC lua
+local uintptr_t = ffi.typeof("uintptr_t")
+local c_str_t = ffi.typeof("const char*")
+local int_t = ffi.typeof("int")
+local int_array_t = ffi.typeof("int[?]")
+#+END_SRC
+
+ffi.new: cdata = ffi.new(ct [,nelem] [,init...])
+开辟空间，第一个参数为 ctype 对象， ctype 对象最好通过 ctype = ffi.typeof(ct) 构建
+使用 ffi.new 分配的 cdata 对象指向的内存块是由垃圾回收器 LuaJIT GC 自动管理的
+使用 ffi.C.malloc 分配的空间便不再使用 LuaJIT 自己的分配器了
+要注意的是 ffi.C.malloc 返回的指针本身所对应的 cdata 对象还是由 LuaJIT GC 来管理的，
+也就是这个指针的 cdata 对象指向的是用 ffi.C.malloc 分配的内存空间。
+这个时候，你应该通过 ffi.gc() 函数在这个 C 指针的 cdata 对象上面注册自己的析构函数，
+这个析构函数里面你可以再调用 ffi.C.free，这样的话当 C 指针所对应的 cdata 对象被 Luajit GC 
+管理器垃圾回收时候，也会自动调用你注册的那个析构函数来执行 C 级别的内存释放。
+
+如果要使用很大的内存，还是用 ffi.C.malloc 来分配会比较好，避免耗尽了 LuaJIT GC 管理内存的上限.
+
+ffi.fill: 填充数据，此函数和 memset(dst, c, len) 类似，注意参数的顺序, 例如:
+#+BEGIN_SRC lua
+ffi.fill(self.bucket_v, ffi_sizeof(int_t, bucket_sz), 0)
+ffi.fill(q, ffi_sizeof(queue_type, size + 1), 0)
+#+END_SRC
+
+ffi.cast:创建一个 scalar cdata 对象
+#+BEGIN_SRC lua
+local c_str_t = ffi.typeof("const char*")
+local c_str = ffi.cast(c_str_t, str)       -- 转换为指针地址
+
+local uintptr_t = ffi.typeof("uintptr_t")
+tonumber(ffi.cast(uintptr_t, c_str))       -- 转换为数字
+#+END_SRC
+
+cdata 对象的垃圾回收: 由显式的 ffi.new(), ffi.cast() etc. 或者隐式的 accessors 所创建的 cdata 
+对象都是能被垃圾回收的.
+#+BEGIN_SRC lua
+ffi.cdef[[
+typedef struct { int *a; } foo_t;
+]]
+
+local s = ffi.new("foo_t", ffi.new("int[10]")) -- WRONG!
+
+local a = ffi.new("int[10]") -- OK
+local s = ffi.new("foo_t", a)
+-- Now do something with 's', but keep 'a' alive until you're done.
+#+END_SRC
+
+*** JIT
+https://moonbingbing.gitbooks.io/openresty-best-practices/content/lua/what_jit.html
+*** luarock
+官网:http://luarocks.org/repositories/rocks/
+可以用来管理lua的第三方库.
+
+** Nginx
+Nginx使用基于事件驱动的架构,能够并发处理百万级别的TCP连接.
+** 唯一实例
+init_worker_by_lua_file lua/init_worker.lua;
+
+ngx.worker.id()
+ngx.timer.at
+pcall
+
+在nginx的配置文件中开启了缓存路径后: proxy_cache_path /tmp/qttc_cache levels=2:2 keys_zone=qttc:200m inactive=1d max_size=10g;
+会多这cache manager process, cache loader process两个进程. 而且使用ngx.worker.id()获取id时, 这两个进程都会返回0,
+因此在进行唯一实例绑定的时候, 需要注意这个坑, 可以通过将其绑定到非0的即可.
+
+*** location 匹配规则
+语法: location [=|~|~*|^~] /uri/ { }
+| 模式                | 含义                                                                        |
+|---------------------+-----------------------------------------------------------------------------|
+| location = /uri     | "=" 表示精确匹配，只有完全匹配上才能生效                                    |
+| location ^~ /uri    | ^~ 开头对URL路径进行前缀匹配，并且在正则之前                                |
+| location ~ pattern  | 开头表示区分大小写的正则匹配                                                |
+| location ~* pattern | 开头表示不区分大小写的正则匹配                                              |
+| location /uri       | 不带任何修饰符，也表示前缀匹配，但是在正则匹配之后                          |
+| location /          | 通用匹配，任何未匹配到其它location的请求都会匹配到，相当于switch中的default |
+
+多个location配置的情况下匹配顺序(未实际验证, 如果不一致以实际运行结果为准):
+首先精确匹配 =, 其次前缀匹配 ^~, 其次是按文件中顺序的正则匹配, 然后匹配不带任何修饰的前缀匹配.
+最后是交给 / 通用匹配, 当有匹配成功时候,停止匹配,按当前匹配规则处理请求.
+前缀匹配,如果有包含关系时,按最大匹配原则进行匹配.比如在前缀匹配: location /dir01 与 location /dir01/dir02,
+如有请求 http://localhost/dir01/dir02/file 将最终匹配到 location /dir01/dir02.
+
+*** if是邪恶的
+
+* 实例
+nginx.conf配置
+#+BEGIN_SRC text
+location ~ /lua_request/(\d+)/(\d+) {
+  # 设置nginx变量
+  set $a $1;
+  set $b $host;
+
+  default_type "text/html";
+
+  #nginx内容处理
+  content_by_lua_file lua/lua_request.lua;
+  # 内容体处理完成后调用
+  echo_after_body "ngx.var.b $b";
+}
+#+END_SRC
+
+#+BEGIN_SRC lua lua_request.lua
+-- nginx变量
+local var = ngx.var
+
+ngx.say("ngx.var.a: " .. var.a)
+ngx.say("ngx.var.b: " .. var.b)
+ngx.say("ngx.var[2]: " .. var[2])
+ngx.say("\n")
+
+ngx.var.b = 22
+
+-- 请求头
+local headers = ngx.req.get_headers()
+ngx.say("headers begin")
+ngx.say("Host: " .. headers["Host"])
+ngx.say("user-agent : ", headers["user-agent"])
+ngx.say("user-agent : ", headers.user_agent)
+
+for k,v in pairs(headers) do  
+    if type(v) == "table" then  
+       ngx.say(k, " : ", table.concat(v, ","))
+    else  
+       ngx.say(k, " : ", v)
+    end  
+end  
+ngx.say("headers end\n")
+
+-- get请求uri参数
+ngx.say("uri args begin:")
+local uri_args = ngx.req.get_uri_args()
+for k, v in pairs(uri_args) do
+   if type(v) == 'table' then
+      ngx.say(k .. ':' .. table.concat(v, ", "))
+   else
+      ngx.say(k .. ':' .. v)
+   end
+end
+ngx.say("uri args end \n")
+
+-- post 请求
+ngx.say("post args begin:")
+ngx.req.read_body()
+local post_args = ngx.req.get_post_args()
+for k, v in pairs(post_args) do
+   if type(v) == 'table' then
+      ngx.say(k, ':', table.concat(v, ', '))
+   else
+      ngx.say(k, ':', v)
+   end
+end
+ngx.say("post args end\n")
+
+-- 请求头的http协议版本
+ngx.say("ngx.req.http_version:", ngx.req.http_version())
+-- 请求方法
+ngx.say("ngx.req.get_method:", ngx.req.get_method())
+-- 原始请求头
+ngx.say("ngx.req.raw_header:", ngx.req.raw_header())
+-- 请求的body内容体
+ngx.say("ngx.req.get_body_data:", ngx.req.get_body_data())
+ngx.say("\n")
+
+
+--[[
+说明：
+ngx.var: nginx变量,如果要赋值如ngx.var.b = 2,此变量必须提前声明;
+另外对于nginx location中使用正则捕获的捕获组可以使用ngx.var[捕获组数字]获取.
+
+ngx.req.get_headers: 获取请求头,默认只获取前100,如果想要获取所以可以调用ngx.req.get_headers(0)
+获取带中划线的请求头时请使用如headers.user_agent这种方式,如果一个请求头有多个值,则返回的是数组形式的table
+可以将get_headers的第二个参数设置为true, 阻止中划线与下划线之间的转换从而保持原样.
+
+ngx.req.get_post_args: 获取post请求内容体, 前提是需要先调用ngx.req.read_body()来读取body体
+(也可以选择在nginx配置文件使用lua_need_request_body on;开启读取body体，但是官方不推荐).
+
+ngx.req.raw_header: 未解析的请求头字符串
+ngx.req.get_body_data: 未解析的请求body体内容字符串
+
+另外在读取post内容体时根据实际情况设置client_body_buffer_size和client_max_body_size
+来保证内容在内存而不是在文件中
+]]
+
+-- ngx.header输出响应头
+-- 响应头信息中并未输出name
+ngx.header.name = "demon"
+
+-- 重定向
+-- ngx.redirect("http://www.baidu.com")
+
+
+--未经解码的请求uri
+local request_uri = ngx.var.request_uri
+ngx.say("nodecode request_uri: ", request_uri)
+--解码
+ngx.say("decode request_uri: ", ngx.unescape_uri(request_uri))
+--MD5
+ngx.say("ngx.md5(123): ", ngx.md5("123"))
+--http time
+ngx.say("ngx.http_time: ", ngx.http_time(ngx.time()))
+
+--[[
+ngx.escape_uri/ngx.unescape_uri: uri编码解码
+ngx.encode_args/ngx.decode_args: 参数编码解码
+ngx.encode_base64/ngx.decode_base64: BASE64编码解码
+]]
+#+END_SRC
+
+

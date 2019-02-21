@@ -1,1 +1,693 @@
 https://github.com/lammertb/libhttp - libhttp
+
+* Boost库安装
+** ubuntu
+如果要全量安装boost, 需要先安装第三方依赖:
+apt-get install mpi-default-dev libicu-dev python-dev python3-dev \
+libbz2-dev zlib1g-dev
+
+运行booststrap.sh来编译b2
+./bootstrap.sh --with-toolset=clang 不指定with-toolset则默认使用gcc
+
+编译得到b2后, 再全量编译boost:
+./b2 install --build-type=complete --layout=versioned threading=multi --prefix="/which/to/install"
+命令解释: 
+stage/install: stage表示只生成库(dll和lib),install还会生成包含头文件的include目录.
+without/with: 选择不编译/编译哪些库, 默认是全部编译.
+查看boost包含库的命令是: bjam --show-libraries
+stagedir/prefix: stage时使用stagedir,install时使用prefix,表示编译生成文件的路径.
+build-dir: 编译生成的中间文件的路径, 默认就在根目录, 目录名为bin.v2, 编译完成后可将这个目录全部删除
+link: 生成动态链接库/静态链接库.生成动态链接库需使用shared方式,生成静态链接库需使用static方式.
+一般boost库可能都是以static方式编译.
+
+runtime-link: 动态/静态链接C/C++运行时库.同样有shared和static两种方式,这样runtime-link和link一共可以产生4种组合方式.
+threading: 单/多线程编译.一般都写多线程程序,指定multi方式,如果需要编写单线程程序,使用single方式.
+debug/release: 编译debug/release版本.一般都是程序的debug版本对应库的debug版本,所以两个都编译.
+
+*** 环境变量配置
+export C_INCLUDE_PATH=/usr/lib/boost-1.60/include/boost-1_60:$C_INCLUDE_PATH
+export CPLUS_INCLUDE_PATH=/usr/lib/boost-1.60/include/boost-1_60:$CPLUS_INCLUDE_PATH
+export LD_LIBRARY_PATH=/usr/lib/boost-1.60/lib:$LD_LIBRARY_PATH
+export LIBRARY_PATH=/usr/lib/boost-1.60/lib:$LIBRARY_PATH
+C_INCLUDE_PATH不是必须的,因为这仅仅对C编译器生效.
+
+mac下如果使用动态库编译, 运行时报找不到动态库错误时, 可以添加环境变量:
+export DYLD_LIBRARY_PATH="$DYLD_LIBRARY_PATH:/boost/lib"
+
+#+BEGIN_SRC c++ 测试程序
+// filename: boost_test.cpp
+#include <string>
+#include <iostream>
+#include <boost/version.hpp>
+#include <boost/timer.hpp>
+using namespace std;
+int main()
+{
+    boost::timer t;
+    cout << "max timespan: " << t.elapsed_max() / 3600 << "h" << endl;
+    cout << "min timespan: " << t.elapsed_min() << "s" << endl;
+    cout << "now time elapsed: " << t.elapsed() << "s" << endl;
+    cout << "boost version" << BOOST_VERSION <<endl;
+    cout << "boost lib version" << BOOST_LIB_VERSION <<endl;
+    return 0;
+}
+// 编译: g++ boost_test.cpp -I/which/boost/include
+// 如果安装成功, 编译后会输出boost的版本.
+
+// filename: boost_complielib_test.cpp
+#include <boost/regex.hpp>
+#include <string>
+#include <iostream>
+
+int main()
+{
+    std::string line;
+    boost::regex pat("^Subject: (Re |Aw: )*(.*)");
+    while(std::cin)
+    {
+        std::getline(std::cin, line);
+        boost::smatch matches;
+        if(boost::regex_match(line, matches, pat))
+        {
+            std::cout << matches[2] << std::endl;
+        }
+    }
+}
+
+// g++ -I/boost_path/include boost_complielib_test.cpp -o example \
+// -L/boost_path/lib -lboost_regex
+// 执行: example < test.txt , 正常情况下应该输出 Will Success?
+// test.txt的内容是:
+// m:Alex Zhou
+// Subject: Will Success?
+// -
+// See subject
+#+END_SRC
+* 字节序
+计算机硬件有两种存储数据的方式: 大端字节序, 小端字节序.
+大端字节序: 高位字节在前, 低位字节在后, 与人类的书写顺序一致, 结合内存来看, 高位字节存储在低字节, 低位字节存储在高字节中
+小端字节序: 低位字节在前, 高位字节在后, 结合内存存储, 小存小, 大存大.
+例如: 0x1234567的大端存储是: 0x01 0x23 0x45 0x67, 小端存储是: 0x67 0x45 0x23 0x01
+
+* Unix进程
+** 系统调用
+Unix系统由用户空间(Userland)和内核组成, 内核位于计算机硬件之上, 是与硬件交互的中介.
+这些交互包括通过文件系统进行读写, 在网络上发送数据, 分配内存以及通过扬声器播放音频.
+程序不可以直接访问内核, 所有的通信都是通过系统调用来完成的.
+
+系统调用为内核和用户空间搭建了桥梁, 规定了程序与计算机硬件之间所允许发生的一切交互.
+
+所有的程序都运行在用户空间, 就算是不借助系统调用, 也可以计算数学运算, 字符串操作以及
+使用逻辑控制语句控制程序流程.
+
+进程是Unix系统的基石, 因为所有的代码都是在进程中执行的.
+
+在系统中运行的所有进程都有一个唯一的进程标识符, 称为pid.
+
+** pid
+ps -p pid: 根据pid来查看进程
+在bash中, $$表示当前进程的pid, 例如: echo $$
+
+系统中运行的每个进程都有对应的父进程, 每个进程都知道其父进程的标识符(ppid)
+在多数情况下, 特定进程的父进程就是调用它的那个进程.
+ppid在检测守护进程时发挥着重要作用.
+
+文件描述符代表打开的文件.
+Unix哲学指出, 在Unix世界中, 万物皆为文件.即可以将设备视为文件, 将套接字和管道
+视为文件, 将文件也视为文件.
+
+无论何时在进程中打开一个资源, 都会获得一个文件描述编号. 文件描述符不会在无关进程
+之间共享, 它只存在于其所属的进程之中. 当进程结束后, 会和其他由进程打开的资源一同
+被关闭.当衍生出一个进程时, 文件描述符共享会有一些特殊的含义.
+
+进程打开的所有资源都会获得一个用于标识的唯一数字, 这便是内核跟踪进程所用资源的方法.
+所分配的描述符编号是尚未使用的最小数值, 资源一旦关闭, 对应的文件描述符编号就又能
+使用了.
+文件描述符只是用来跟踪打开的资源, 已经关闭的资源是没有文件描述符的, 试图获取一个
+已关闭资源的文件描述符会产生一个异常.
+
+每个进程都有3个打开的资源, 它们是标准输入(STDIN)、标准输出(STDOUT)、标准错误(STDERR)
+
+一个进程拥有的文件描述符取决于系统配置, 重要的一点是内核为进程施加了某些资源限制.
+
+软限制: 其实算不上一种限制, 如果超出了软限制将会产生异常. 任何进程都可以修改自身的软
+限制.
+
+所有进程都从其父进程处继承环境变量. 它们由父进程设置并被子进程所继承.每个进程都有
+环境变量, 环境变量对于特定进程而言是全局的.
+
+环境变量可以在进程之间共享状态.
+
+有两种运作在进程自身层面上的机制可以用来互通信息, 一个是进程名称, 另一个是退出码.
+所有进程在结束时都带有数字退出码(0~255), 用于指明进程是否顺利结束.
+
+fork: fork系统调用允许运行中的进程以编程的形式创建新的进程, 该进程和原始进程一模一样.
+调用fork的进程被称为"父进程", 新创建的进程称为"子进程".
+子进程从父进程处继承了其所占用内存中的所有内容, 以及所有属于父进程的已打开的文件描述符.
+子进程可以随意修改其内存内容的副本, 不会对父进程造成任何影响.
+
+** fork
+fork一次调用实际上返回了两次, fork创造了一个新进程, 所以在调用进程中返回一次, 在新创建
+的进程中又返回一次.
+在子进程中, fork返回假, 在父进程中,fork返回新创建的子进程的pid.
+
+当父进程结束后, 子进程会如何? 子进程会照常继续运行, 操作系统并不会对子进程区别对待.
+
+写时复制(cow: copy-on-write)
+
+当创建了子进程后, 父进程可以等待子进程执行完之后继续执行.
+进程间的通信可以不需要文件系统, 也可以不需要网络.
+
+当一个父进程创建了很多个子进程后, 并且父进程会等待每个子进程的运行结果,
+当子进程退出时会将退出信息加入到队列中, 这样父进程总是能够依照子进程退出的顺序
+接收到信息, 即便父进程处理每个退出子进程的速度缓慢, 当他准备妥当的时候, 也总
+能够获取到每个子进程的退出信息.
+
+任何一个已经结束的进程, 如果他的状态信息一直未能被读取, 那么就是一个僵尸进程.
+所以任何子进程如果在结束之时其父进程仍在运行那么这个子进程很快就会成为僵尸.
+一旦父进程读取了僵尸进程的状态信息, 那么他就不复存在, 也就不再消耗内核资源.
+
+** 孤儿进程与僵尸进程
+正常情况下,子进程是通过父进程创建的,子进程在创建新的进程.
+子进程的结束和父进程的运行是一个异步过程,即父进程永远无法预测子进程到底什么时候结束.
+当一个进程完成它的工作终止之后,它的父进程需要调用wait()或者waitpid()系统调用取得子进程的终止状态.
+孤儿进程:一个父进程退出,而它的一个或多个子进程还在运行,那么那些子进程将成为孤儿进程,
+孤儿进程将被init进程(进程号为1)所收养,并由init进程对它们完成状态收集工作.
+
+僵尸进程:一个进程使用fork创建子进程,如果子进程退出,而父进程并没有调用wait或waitpid获取子进程的状态信息,
+那么子进程的进程描述符仍然保存在系统中.这种进程称之为僵死进程.
+
+unix提供了一种机制可以保证只要父进程想知道子进程结束时的状态信息,就可以得到.
+这种机制就是:在每个进程退出的时候,内核释放该进程所有的资源,包括打开的文件,占用的内存等,
+但是仍然为其保留一定的信息(包括进程号the process ID,
+退出状态the termination status of the process,
+运行时间the amount of CPU time taken by the process等).
+直到父进程通过wait/waitpid来取时才释放,
+但这样就导致了问题,如果进程不调用wait/waitpid的话,
+那么保留的那段信息就不会释放,其进程号就会一直被占用,但是系统所能使用的进程号是有限的,
+如果大量的产生僵死进程,将因为没有可用的进程号而导致系统不能产生新的进程.
+此即为僵尸进程的危害,应当避免.
+
+任何一个子进程(init除外)在exit()之后,并非马上就消失掉,而是留下一个称为僵尸进程(Zombie)的数据结构,
+等待父进程处理.这是每个子进程在结束时都要经过的阶段.如果子进程在exit()之后,
+父进程没有来得及处理,这时用ps命令就能看到子进程的状态是"Z".如果父进程能及时处理,
+可能用ps命令就来不及看到子进程的僵尸状态,但这并不等于子进程不经过僵尸状态.
+
+严格地来说,僵死进程并不是问题的根源,罪魁祸首是产生出大量僵死进程的那个父进程.
+因此,当我们寻求如何消灭系统中大量的僵死进程时,答案就是把产生大量僵死进程的那个元凶枪毙掉
+(也就是通过kill发送SIGTERM或者SIGKILL信号),枪毙了元凶进程之后,
+它产生的僵死进程就变成了孤儿进程,这些孤儿进程会被init进程接管,
+init进程会wait()这些孤儿进程,释放它们占用的系统进程表中的资源.
+
+#+BEGIN_SRC c 例子代码
+/*正常版本*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
+
+int main() {
+  pid_t pid;
+
+  pid = fork();
+  if (pid < 0) {
+    perror("fork error");
+    exit(1);
+  } else if (pid == 0) {
+    printf("I am the child process\n");
+    printf("pid: %d, ppid: %d\n", getpid(), getppid());
+    //睡眠5秒, 保证父进程退出
+    sleep(5);
+    // 此时输出的父进程pid是1,
+    printf("pid: %d, ppid: %d\n", getpid(), getppid());
+    printf("child process exit\n");
+  } else {
+    printf("I am father process\n");
+    // 保证子进程输出信息
+    sleep(1);
+    printf("father process exit\n");
+  }
+  return 0;
+}
+
+// 演示查看僵尸进程版本
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
+
+int main() {
+  pid_t pid;
+
+  pid = fork();
+  if (pid < 0) {
+    perror("fork error");
+    exit(1);
+  } else if (pid == 0) {
+    printf("I am the child process\n");
+    printf("pid: %d, ppid: %d\n", getpid(), getppid());
+    printf("child process exit\n");
+  } else {
+    printf("I am father process\n");
+    // 保证子进程输出信息
+    sleep(3);
+    system("ps -o pid,ppid,state,tty,command");
+    printf("father process exit\n");
+  }
+  return 0;
+}
+
+//不断产生僵尸进程
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
+
+int main() {
+  pid_t pid;
+
+  while(1) {
+    pid = fork();
+    if (pid < 0) {
+      perror("fork error");
+      exit(1);
+    } else if (pid == 0) {
+      printf("I am the child process\n");
+      printf("child process exit\n");
+      exit(0);
+    } else {
+      // 保证子进程输出信息
+      sleep(20);
+      system("ps -o pid,ppid,state,tty,command");
+      printf("father process exit\n");
+      continue;
+    }
+  }
+  return 0;
+}
+
+// 僵尸进程解决办法
+// 1. 通过信号机制
+// 子进程退出时向父进程发送SIGCHLD信号,父进程处理SIGCHILD信号.
+// 在信号处理函数中调用wait进行处理僵尸进程.
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <signal.h>
+
+static void sig_child(int signo);
+
+int main() {
+  pid_t pid;
+
+  signal(SIGCHLD, sig_child);
+  pid = fork();
+  if(pid < 0) {
+    perror("fork error\n");
+    exit(1);
+  } else if (pid == 0) {
+    printf("I am child process\n");
+    exit(0);
+  }
+  printf("I am father\n");
+  sleep(2);
+  system("ps -o pid,ppid,state,tty,command");
+  
+  return 0;
+}
+
+static void sig_child(int signo) {
+  pid_t pid;
+  int stat;
+
+  while((pid = waitpid(-1, &stat, WNOHANG)) > 0) {
+    printf("child %d terminated\n", pid);
+  }
+}
+
+// 处理方法2: fork两次
+// 原理是将子进程成为孤儿进程,从而其的父进程变为init进程,通过init进程可以处理僵尸进程.
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdlib.h>
+
+int main() {
+  pid_t pid;
+  pid = fork();
+  if(pid < 0) {
+    perror("fork error\n");
+    exit(1);
+  } else if (pid == 0) { // 第一个子进程
+    // 子进程再创建一个子进程
+    printf("I am the first childprocess, pid:%d, ppid:%d\n", getpid(), getppid());
+    pid = fork();
+    if(pid < 0) {
+      perror("second fork error\n");
+      exit(1);
+    } else if (pid > 0) { // 第一个子进程已退出
+      printf("first process is exited\n");
+      exit(0);
+    }
+    // 第二个子进程, sleep 3秒, 保证第一个子进程退出,这样第二个子进程的父亲就是init进程里
+    sleep(3);
+    
+    printf("I am the second child process.pid: %d,ppid:%d\n", getpid(), getppid());
+    exit(0);
+  }
+  // 父进程处理第一个子进程
+  if(waitpid(pid, NULL, 0) != pid) {
+    perror("waite pid error\n");
+    exit(1);
+  }
+  
+  return 0;
+}
+
+#+END_SRC
+
+** SIGCHLD信号与并发
+信号投递是不可靠的.
+例如: 如果代码正在处理CHLD信号, 这时候另一个子进程结束了, 也会发送一个CHLD信号, 此时
+未必会受到第二个CHLD信号.
+
+要正确处理CHLD信息, 必须在一个循环中调用wait(), 查找所有已经结束的子进程.
+
+* 基于Linux的TCP网络编程
+Linux下tcp编程架构: file:./img/tcp_socket.gif
+** TCP套接字函数
+1. int socket(int domain, int type, int protocol)
+   用于创建一个套接字描述符, domain:用于指定创建套接字所使用的协议族
+   在头文件<linux/socket.h>中定义, 有时候会使用PF_INET,
+   在头文件中AF_INET和PF_INET的数值是一致的, PF表示POSIX
+
+   常见的协议族: AF_UNIX: 创建只在本机内进行通信的套接字
+   AF_INET: 使用IPv4TCP/IP协议, AF_INET6: 使用IPv6TCP/IP协议
+
+   type:指明套接子通信的类型, SOCK_STREAM:创建TCP流套接字
+   SOCK_DGRAM:创建UDP数据报套接字, SOCK_RAW:创建原始套接字
+   
+   protocol:指定某个协议的特定类型, 通常设置为0,
+   表示通过参数domain指定的协议族和参数type指定的套接字类型来确定使用的协议.
+   当为原始套接字时,系统无法唯一的确定协议,此时就需要使用该参数指定所使用的协议
+
+   返回值: 执行成功后返回一个新创建的套接字;
+   若有错误发生则返回一个-1,错误代码存入errno中.
+
+   #+BEGIN_SRC c
+   int sock_fd;
+   sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+   #+END_SRC
+
+2. int bind(int sockfd, struct sockaddr* addr, socklen_t addrlen)
+   将一个套接字文件描述符与地址和端口绑定
+   sockfd: 是socket()返回的文件描述符
+   addrlen: 是sockaddr结构的长度
+   addr: 指向sockaddr结构的指针,它保存着本地套接字的地址(即端口和IP地址)信息
+   由于系统兼容性的问题,一般不使用这个结构,而使用另外一个结构(structsockaddr_in)来代替
+   struct sockaddr定义了一种通用的套接字地址,它在sys/socket.h 中定义.
+   struct sockaddr{
+     unsigned short sa_family; /* 地址类型,AF_XXX,对于使用TCP/IP协议, 该值只能是AF_INET */
+     char sa_data[ 14]; /* 14字节的协议地址 */
+   }
+
+   每种协议族都有自己的协议地址格式,TCP/IP协议组的地址格式为结构体struct sockaddr_in
+   struct sockaddr_in,它在netinet/in.h头文件中定义.
+   struct sockaddr_in{
+     unsigned short sin_family; /* 地址类型, 对于使用TCP/IP协议, 该值只能是AF_INET */
+     unsigned short sin_port; /* 端口号 */
+     struct in_addr sin_addr;/* 32IP地址 */
+     unsigned char sin_zero[ 8];/* 填充字节，一般赋值为0 */
+   }
+
+   struct in_addr{
+     unsigned long s_addr;
+n   }
+
+   可以将addr的sin_addr设置为INADDR_ANY.
+   对于只有一IP地址的计算机,INADDR_ANY对应的就是它的IP地址;
+   对于多宿主主机(拥有多个网卡),
+   INADDR_ANY表示本服务器程序将处理来自所有网络接口上相应端口的连接请求.
+
+   成功返回0, 有错误是返回-1, 并将错误代码写入到errno中
+
+   #+BEGIN_SRC c
+   // 创建一个udp套接字
+   struct sockaddr_in addr_serv, addr_client;
+   memset(&addr_serv, 0, sizeof(addr_serv));
+   addr_serv.sin_family = AF_INET;
+   addr_serv.sin_port = htons(SERV_PROT);
+   addr_serv.sin_addr.s_addr = htonl(INADDR_ANY);
+   bind(sock_fd, &addr_serv, sizeof(addr_serv));
+   #+END_SRC
+
+3. int listen(int sockfd, int backlog)
+   需要 #include <sys/socket.h>
+   backlog: 指定该连接队列的最大长度, 如果连接队列已经达到最大,之后的连接请求被服务器拒绝.
+   成功运行时,返回值为0;当运行失败时,它的返回值为-1,错误代码存入errno中.
+   
+4. int accept(int sockfd, struct sockaddr* addr, socklen_t *addr_len)
+   需要 #include <sys/types.h>, #include <sys/socket.h>
+   addr:用来保存发起连接请求的主机的地址和端口.
+   accept()函数的返回值是新连接的客户端套接字文件描述符,
+   与客户端之间的通信是通过accept()返回的新套接字文件描述符来进行的,而不是通过建立套接字时的文件描述符.
+   如果accept()函数发生错误,accept()会返回-1,通过errno可以得到错误值.
+   如果参数sockfd所指定的套接字被设置为阻塞方式(Linux下的默认方式),且连接请求队列为空,
+   则accept()将被阻塞直到有连接请求到此为止;如果参数sockfd所指定的套接字被设置为非阻塞方式,
+   如果队列为空,accept将立即返回-1,errno被设置为EAGAIN.
+
+5. int connect(int sockfd, struct sockaddr* addr, socklen_t addrlen)
+   需要 #include <sys/types.h>, <sys/socket.h>
+   addr: 客户端需要连接的服务器的目的IP地址和端口号
+   执行成功后返回0,有错误发生则返回-1,错误代码存入errno中.
+
+6. size_t send(int connfd, const void* msg, size_t len, int flag)
+   需要#include <sys/types.h>, <sys/socket.h>
+   conn_fd: 为已建立好连接的套接字描述符,即调用accept()函数后返回的套接字描述符.
+   msg:存放发送数据的缓冲区, len:发送缓冲区的长度
+   flags:为控制选项,一般设置为0, 或以下值:
+   MSG_OOB:在指定的套接字上发送带外数据(out-of-band data),
+   该类型的套接字必须支持带外数据(如:SOCK_STREAM),
+   MSG_DONTROUTE:通过最直接的路径发送数据，而忽略下层协议的路由设置
+
+   执行成功返回实际发送数据的字节数,出错则返回-1,错误代码存入errno中.
+   成功只是说明数据写入套接字的缓冲区中,并不表示数据已经成功地通过网络发送到目的地.
+
+7. size_t recv(int conn_fd, void *buf, size_t len, int flags)
+   需要#include <sys/socket.h>, <sys/types.h>
+   conn_fd: 为已建立好连接的套接字描述符
+   buf:接收缓冲区, len:接收缓冲区的大小
+   flags:为控制选项,一般设置为0或取以下数值:
+   MSG_OOB:请求接收带外数据,  MSG_PEEK:只查看数据而不读出
+   MSG_WAITALL:只在接收缓冲区满时才返回.
+
+   函数执行成功返回接收到的数据字节数,出错返回-1,错误代码存入errno中.
+
+8. int close(int fd)
+   close()函数的头文件是#include <unistd.h>
+   关闭一个套接字描述符
+   执行成功返回0,出错则返回-1.错误代码存入errno中
+
+** 一个具体的例子
+#+BEGIN_SRC c server端
+
+#+END_SRC
+** 网络方面的转换函数
+1. 本地字节序与网络字节序之间的转换
+   unsigned long int htonl(unsigned long int hostlong)
+   unsigned short int htons(unsigned short int hostshort)
+   unsigned long int ntohl(unsigned long int netlong)
+   unsigned short int ntohs(unsigned short int netshort)
+   这四个函数中的h表示host,n表示network, s表示short,l表示long
+   第一函数的意思是将本地的long数据转换为网络的long数据,其他类推
+
+2. ip与域名
+   struct hostent* gethostbyname(const char* hsotname): 将机器名
+   转换为一个结构指针,这个结构里面储存了域名的信息.
+
+   struct hostent* gethostbyaddr(const char* addr, int len, int type):
+   将一个32位的IP地址(C0A80001)转换为结构指针
+   
+   struct hostent的定义
+   struct hostent {
+     char* h_name; /* 主机的正式名称 */
+     char* h_aliases; /* 主机的别名 */
+     int h_addrtype; /* 主机的地址类型, AF_INET */
+     int h_length; /* 主机的地址长度, IPV4是4字节 */
+     char **h_addr_list; /* 主机的IP地址列表 */
+   }
+   #define h_addr h_addr_list[0] /* 主机的第一个IP地址 */
+
+3. 字符串的IP和32位的IP转换
+   int inet_aton(const char* cp, struct in_addr *inp)
+   char* inet_ntoa(struct in_addr in)
+
+   函数中的a代表ascii, n表示network
+** 原始套接字
+应用原始套接字可以编写出由TCP和UDP套接字不能够实现的功能.
+注意原始套接字只能够由有 root权限的用户创建.
+
+创建: int socket(AF_INET, SOCK_RAW, protocol);
+创建一个原始套接字.根据协议的类型不同可以创建不同类型的原始套接字,
+比如:IPPROTO_ICMP,IPPROTO_TCP,IPPROTO_UDP等
+
+* Linux 多线程服务器端
+https://github.com/chenshuo/recipes,
+https://github.com/chenshuo
+one loop per thread: 多线程网络服务器的一种IO模型.
+
+
+* 0
+0的用途实际上有创建模式, 简化并总结规则的重要作用.
+10称作10进制计数法的基数或者底.
+
+10进制,2进制,8进制,16进制等都叫做按位计数法.
+
+罗马计数法就不是按位计数法, 在表盘上见到的比较多.
+罗马计数法的特征如下:
+数位没有意义, 只表示数字本身, 没有0, 
+使用I(1), V(5), X(10),L(50),C(100),D(500),M(1000)来计数
+将并排的数字加起来就是所表示的数.
+如果有小的记号在大的记号的左边, 则表示减法, 例如:
+#+BEGIN_SRC text
+VI = V + I = 6
+IV = V - I = 4 // 因为I比V小所以表示减法
+在读罗马数字时, 需要从左往右读
+MCMXCVIII = M + (CM) + (XC) + V + III
+= 1998
+#+END_SRC
+
+** 指数法则
+10^3=1000, 10^2=100, 10^1=10, 因此可以理解为指数每减一, 数字就变为原来的10分之1
+因此 10^0=1, 10^-1=1/10.
+
+从以上的例子可以总结出: 应该以简化规则为目标去定义值.
+
+** 0的作用
+占位: 在按位计数法中0是不可或缺的, 0的占位保证了数位高于它的数字不会产生错位
+统一标准, 简化规则: 在10^0中, 就可以将1表示成10^0,从而可以避免特殊处理1.
+
+有了占位符才会产生模式, 有了模式才会产生简单的规则
+
+日常生活中的0的例子: 没有药效的药
+假设现在必须有规律的服用一种胶囊, 每4天停用一次, 即3天服用, 1天停用.
+此时就可以简化为每天都吃药, 但是每4粒中有1粒是"没有药效的药", 事先准备好标有
+日期的盒子, 并在其中放入每天需要服用的药即可.
+
+* 逻辑
+能够判断真假的陈述语句叫做命题.
+
+在确认有没有"遗漏"时的简单方法是画一根数轴. 在处理数轴时, 需要注意其边界值.
+没有"遗漏"即具备完整性, 由此明确该规则在任何情况下都能适用.
+没有"重复"即具备排他性, 由此明确该规则不存在矛盾之处.
+在将大问题分解为小问题时, 常用的方法就是检查它的完备性和排他性.
+
+** 复杂命题
+可以考虑使用真值表来判断, 文氏图.
+文氏图原本是表示集合关系的图.
+
+注意以下各种情况中文氏图的画法.
+
+1. 逻辑非
+2. 逻辑与, 都为真是才为真
+    A ^ B (A and B)
+   文氏图表示: 重叠的部分才是 A and B的部分.
+3. 逻辑或, 都为假时才为假
+   A V B (A or B)
+4. 异或, 相同为0, 不同为1
+   注意异或的电路图画法
+5. 相等
+   假设有A,B两个命题, 那么A和B相等能成为一个命题.
+   可以写作: A = B, A 三条线 B
+   注意其文氏图的画法.
+
+   通过文氏图可以知道, 异或的反面就是相等.
+   将这种恒为true的命题称为 恒真命题.
+6. 蕴涵
+   蕴涵基本上不做运算, 有A,B两个命题构成的"若A则B", 是可以判断真假的.
+   其真值表为:
+   | A     | B     | A=>B  |
+   |-------+-------+-------|
+   | true  | true  | true  |
+   | true  | false | false |
+   | false | true  | true  |
+   | false | false | true  |
+   
+   注意其文氏图的画法.
+   通过文氏图可以简单理解为: 若不踏入A, 则绝对不会落入陷阱, 因为只有A有陷阱
+   或者, 只要待在B中, 则绝对不会落入陷阱中, 因为B中没有陷阱.
+
+   逻辑学中将 B => A称作A => B的逆命题, 逆命题不一定为真.
+   
+   !B => !A 称作 A => B的逆否命题, 原命题与逆否命题的真假值一致.
+   
+   通过文氏图可以得出结论: A => B === !A V B
+德摩根定律:
+!A || !B === !(A && B)
+!A && !B === !(A || B)
+
+逻辑表达式的对偶性.
+
+卡诺图: 将所有命题的真假组合以二维表的形式表示的图.
+可以多了解了解卡诺图的应用.
+
+三值逻辑: 在原有的true和false基础之上, 新引入了undefined(未定义), 使用了
+undefined的逻辑就叫做三值逻辑.
+A && B的三值逻辑的真值表
+| A         | B         | A && B    |
+|-----------+-----------+-----------|
+| true      | true      | true      |
+| true      | false     | false     |
+| true      | undefined | undefined |
+| false     | true      | false     |
+| false     | false     | false     |
+| false     | undefined | undefined |
+| undefined | true      | undefined |
+| undefined | false     | undefined |
+| undefined | undefined | undefined | 
+
+其他几种情况可以使用类似的推导方式.
+
+* 归纳法
+运用余数, 大数字的问题就能简化成小数字的问题.
+** 奇偶校验
+一个表示给定位数的二进制数中1的个数是奇数还是偶数的二进制数.奇偶校验位是最简单的错误检测码.
+奇偶校验位有两种类型:偶校验位与奇校验位.
+
+如果一组给定数据位中1的个数是奇数,那么偶校验位就置为1,从而使得总的1的个数是偶数.
+如果给定一组数据位中1的个数是偶数,那么奇校验位就置为1,使得总的1的个数是奇数.
+
+** 循环不变式
+在编写循环时, 找到让每次循环都成立的逻辑表达式, 这种逻辑表达式就是循环不变式
+
+因此在编写循环时, 应该考虑一下这个循环的循环不变式是什么.
+
+** 容拆原理
+集合A,B的元素总数=A的元素个数+B的元素个数-A和B共同的元素数
+
+** 阶乘
+将n个事物按顺序进行排列称为置换.
+** 递归
+递归和归纳只是方向不同, "从一般性前提推出个别性结论"的是递归,
+从个别性前提推出一般性结论的是归纳.
+
+斐波那契数列会出现在各种问题中, 例如:
+将1X2大小的砖头摆放成长方形阵列, 并规定该长方形的纵长必须是2,假设长为n,
+运用斐波那契数列则砖头的摆法有F(n+1)种.
+分析: 横长为n的摆法就是以下两项之和, 左边竖着放置一块砖头时,右边砖头(n-1块)的摆法,
+左边横着放两块砖头时, 右边砖头(n-2块)的摆法情况.
+
+爬台阶的问题也是斐波那契数列的一种.
+
+杨辉三角中出现的每一个数都是一个"组合数", 从杨辉三角可以得出一个结论, 
+组合数的计算可以通过反复计算"相邻两数之和"来得出.
+
+谢尔平斯基三角: 用颜色区分杨辉三角中的奇数和偶数就出现了谢尔平斯基三角.
+将含有递归结构的图形称为分形图.
+
+汉罗塔,阶乘,组合数都具有一定的递归结构.
+** 对角论证法
+** 停机问题
+停机问题: 判断"某程序在给定数据下, 是否会在有限时间内结束运行"的问题.
+

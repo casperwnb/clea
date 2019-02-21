@@ -20,3 +20,7 @@ OpenBSD自6.5起, Mac OSX自10.11起, Alpine Linux自3.5.0起.
    
    下载nginx源码, ./configure --with-http_ssl_module
 
+* OSCP
+[[https://mp.weixin.qq.com/s/il9GnrNqBSGWMDom0MqImg][OSCP资料(web)]]
+
+iDRAC: 远程控制网卡, 在dell的服务器上自带该接口.

@@ -1,0 +1,542 @@
+* 术语
+PCB(Printed Circuit Board): 印刷电路板, 即所谓的I/O电路板.
+arduino I/O电路板传统上是基于Atmel的AVR ATmega8及其后续型号的.
+
+AVR: 可编程的单片机芯片.
+PLC: 可编程逻辑控制器
+
+COM: 表示串口, 后面的数字是串口号, 串口号是电脑随机分配的
+
+单片机任何时候只能运行一个程序.
+单片机端口是标准双向口, 既可以作为输入也可以作为输出.
+
+拉电流: 电流流向从单片机引脚输出到LED灯, 通过限流电阻回流到GND(电源地),
+是单片机的引脚提供的电压.
+
+灌电流: 反向节LED时, 原来接GND的一端需要接VCC(就是标注5V或3V3的引脚),
+此时电流流向是VCC到LED灯, 然后经过限流电阻, 再通过单片机引脚回流到GND,
+使用VCC提供电压的.
+
+单片机的输入输出: 将单片机比喻为水池, 水池的进水口就是输入, 出水口就是输出.
+
+LED: 一般情况下, 长脚是正极, LED内部电极体积小的是正极(部分红色LED相反),
+LED的电流是从正极流向负极, 反过来是无法点亮LED的.
+
+面包板: 带有正负极标注的是横向导通的, 带有字母标号的是纵向导通的.
+
+共阳连接: 多个LED的阳极连接到一起
+共阴连接: 多个LED的阴极连接到一起
+
+上拉电阻: 用一个电阻连接到该端口与VCC之间, 保证在非低电平的状态下强制变为高电平,
+否则端口有可能是高阻状态, 导致不能正确的识别高电平.
+
+下拉电阻: 将电阻连接到端口与GND之间, 原理类似, 引用范围比上拉电阻少.
+
+软件去除抖动: 按键属于机械结构, 由于材质不同, 按键按下和释放瞬间会出现机械抖动, 过了
+抖动期才是稳定期. 去除抖动的方法有, 1: 在按键端并联一个适当的电容来消除这些抖动, 但
+不同的按键需要实验不同的电容参数, 因此实验会变得复杂, 效果也不乐观.
+2: 软件去除抖动, 原理:
+检测到按键按下后进行10~15ms延时, 用于跳过这个抖动时间段, 延时后再次检测按键状态,
+如果没有检测到按键按下说明是抖动或干扰造成的, 如果任然检查到按键则可以认为是有效的按键,
+单片机再进行相应的操作. 同样, 按键的释放后也进行去抖延时, 延时后检测按键是否真正释放.
+
+* 环境搭建
+** windows环境搭建
+1. 在[[https://www.arduino.cc/][arduino官网]], 找到下载地址, 下载对应版本的软件
+2. 连接arduino开发板与PC, 安装相应驱动
+   右键点击"我的电脑"->"系统属性"->"设备管理", 在"其他"中可以发现一个未识别的接口
+   右键该接口, 选择"更新驱动", 手动安装驱动, 驱动的路径是arduino软件下的drivers目录.
+3. 安装完成之后, 查看"端口"的选项下可以看到一个设备名称, 记住其COM接口的名称, 如:
+   COM3
+4. 打开arduino软件, 选择"工具"菜单, 在"板块"的地方需要选择对应的arduino板块的类型
+   然后在"端口"信息中勾选对应的COM口即可.
+   
+5. 下载辅助包
+   https://github.com/taweili/ardublock/downloads
+   然后在arduino安装包的根目录下新建一个tools/ArduBlockTool/tool(注意大小一定要正确)
+   将下载的jar文件放到该目录下. 然后重启arduino.
+
+** Mac
+直接在官网下载arduino软件即可, 将其解压放到Application目录下即可完成安装.
+然后在arduino的"工具"->"端口", 选择对应的接口即可.
+
+安装ArduBlock插件:
+jar文件下载地址: https://github.com/taweili/ardublock/downloads
+将jar文件放到: ~/Documents/Arduino/tools/ArduBlockTool/tool目录下, 重启即可.
+
+** 其他软件
+fritzing: 图形化arduino电路开发板.
+
+* arduino语言
+** 设置avr-gcc开发路径
+交叉编译环境在<arduino安装文件件>/hardware/tools/avr/bin路径中, 将其加入到PATH环境
+变量中.
+
+** 基础
+arduino语言继承自C, 与C非常相似, 在其发展过程中对C做了微小的改动.
+arduino没有启动程序的main函数, 换成了两个重要的函数, setup()和loop().
+
+setup: 做一次性初始化的.
+loop: 会不断的, 无限次地被重复调用.
+
+arduino并不知道你要往哪个设备做标准输出, 因此调用fdevopen()时, 需要提供一个指针,
+该指针指向向那个设备输出一个字符的函数, 就可以把标准输出指向正确的地方.
+
+#+BEGIN_SRC c 输出字符串的程序
+#include <stdio.h>
+
+int serial_console_putc(char c, FILE *) {
+  Serial.write(c);  // 通过串口送出一个字符
+  return 0; // 返回
+}
+
+void setup() {
+  Serial.begin(9600); // 初始化串口
+  fdevopen(&serial_console_putc, NULL); // 将stdout指向串口
+  printf("Hello, world!\n");
+}
+
+void loop() {}
+
+// arduino中建议直接和串口打交道, 因此可以直接写为如下代码:
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Hello, world!");
+}
+void loop() {}
+#+END_SRC
+** 手动上传到arduino
+1. 编写程序
+   #+BEGIN_SRC c 闪烁程序, 使用纯c代码编写
+   #include <avr/io.h>
+   int main(void) {
+     long i;
+     DDRB = 1 << 5; // PB5/D13是一个输出
+
+     while(1) {
+       PORTB = 1 << 5;  // LED亮起
+       for(i = 0; i < 100000; ++i);  // 延迟
+       PORTB = 0 << 5;  // LED熄灭
+       for(i=0; i<100000; ++i);
+     }
+   }
+   #+END_SRC
+2. 编译
+   avr-gcc -mmcu=atmega328p xx.c -o xx.o
+   avr-objcopy -O ihex blink.o blink.hex
+   avrdude -p atmega328p -c stk500v1 -P \\.\COM11 -U flash:w:blink.hex:i
+   -p atmega328p: 告诉avrdude要编程的芯片的类型
+   -c stk500v1: 表示用stk500版本1协议来协调芯片的编程
+   -P \\.\COM11: 使用哪个串口(Windows下的写法).
+   -U flash:w:blink.hex:i 完整的内存编程指令, 指出所用的内存区域(flash存储器), 
+   文件名(blink.hex), 以及文件格式(i表示Intel HEX格式), w: 表示写.
+
+** 语句片段
+#+BEGIN_SRC c
+pinMode(13, OUTPUT);  // 将13引脚定义为输出位, 这样就可以驱动LED灯.
+
+digitalWrite(13, HIGH); // 对指定的13号端口写入数字信号1.
+
+delay(1000); // 延迟1000毫秒
+
+int sensorReading = analogRead(A0); // 从模拟输入A0读取数据, A0是事先预定义好的
+
+// 将对应的值转换成0到8之间的某个值.
+// A0模拟值的取值范围是0-1023, 因为arduino使用的是10bitADC.
+int level = map(sensorReading, 0, 1023, 0, 8);
+
+Serial.begin(9600); // 初始化串口, 设置波特率
+pinMode(2, INPUT); // 设置2号引脚为输入模式, 用于读取端口电平
+
+int btnState = digitalRead(2); // 从2号引脚读取数字信号
+
+Serial.println(btnState); // 将数据输出到串口, 可以使用arduino自带的串口调试器
+#+END_SRC
+
+* 到的错误以及解决方法
+** 在编译上传是遇到如下问题
+*** avrdude: stk500_getsync(): not in sync: resp=0x00
+该错误代表着无法通过USB与arduino控制板进行通信. 常见的几个原因如下:
+1. arduino控制板或COM口没有选对, 此时重新选择正确的即可
+2. 下载的时候, arduino控制板上接了其他扩展板(使用D0,D1口的基本都会出问题,
+   这两个口是用来通信下载程序的), 可以先拔掉扩展板再次尝试下载程序.
+   在实验时遇到了该问题.
+3. bootloader损坏, 此时需要重新安装bootloader
+4. 驱动未安装好
+
+* 小程序
+** 数字输入和判断(按下LED亮, 再按下LED灭)
+#+BEGIN_SRC c 第一种方法, 在按下按钮松开的时候LED才发生变化
+const int LEDPin = 13;
+const int BtnPin = 2;
+int light = 1;
+
+void setup() {
+  pinMode(BtnPin, INPUT);
+
+  pinMode(LEDPin, OUTPUT);
+  digitalWrite(LEDPin, HIGH);
+}
+
+void loop() {
+  int reading = digitalRead(BtnPin);
+  if (reading) {
+    delay(5); // 延迟5ms后再一次读取引脚数据
+    reading = digitalRead(BtnPin);
+    if(reading) {
+      light = !light; // 翻转LED的状态;
+      do {
+        reading = digitalRead(BtnPin);
+      } while(reading); // 直到松开按钮, 才往下走
+    }
+  }
+
+  if(light) {
+    digitalWrite(LEDPin, HIGH);
+  } else {
+    digitalWrite(LEDPin, LOW);
+  }
+}
+
+#+END_SRC
+#+BEGIN_SRC c 第二种方法, 在按下按钮的时候LED立即进行变化, 松开后状态不变
+const int LEDPin = 13;
+const int BtnPin = 2;
+
+// LED的亮灭状态
+int LEDState = HIGH;
+int BtnState;
+int PrevBtnState = LOW; // 上一次按钮状态, 默认为关闭
+long PrevBtnTime = 0;
+
+void setup() {
+  pinMode(LEDPin, OUTPUT);
+  pinMode(BtnPin, INPUT);
+
+  digitalWrite(LEDPin, LEDState);
+}
+
+void loop() {
+  int reading = digitalRead(BtnPin);
+
+  //如果按钮的状态发生了变化, 则重新设置时间
+  if(reading != PrevBtnState) {
+    PrevBtnTime = millis();
+  }
+
+  if(millis() - PrevBtnTime > 50) {  // 过了50ms(设定的抖动时间)
+    if(reading != BtnState) { // 过了50ms后, 按钮的状态稳定了,可以开始设置新的状态
+      BtnState = reading;
+      if(BtnState == HIGH) {
+        LEDState = !LEDState;
+      }
+    }
+  }
+
+  digitalWrite(LEDPin, LEDState);
+  PrevBtnState = reading;
+}
+#+END_SRC
+以上两种方法可以理解为keyup和keydown事件.
+
+* 嵌入式开发
+** 推荐书籍
+C语言深度剖析, 程序员面试宝典, C 专家编程, C和指针
+
+** gcc的使用
+gcc根据文件后缀名进行编译链的选择.
+
+gcc -o outfile_name inputfile_name
+gcc -v -o outfile_name inputfile_name 输出编译过程
+
+预处理: cpp -o a.i xx.c <=> gcc -E
+
+编译: gcc -S <=> cc1命令 生成.s文件
+
+汇编: as 命令: as -o a.o a.s
+gcc -c 会调用as命令, 生成.o文件
+
+链接: collect2 -o <xx> <=> gcc -o 
+
+
+gcc 编译过程: .c源码文件 -> 预处理(pre-processing) ->.i(c预处理后的文件, .iicpp预处理后的文件)预编译文件
+->编译->.s汇编文件->汇编->.o目标文件->链接->可执行文件
+
+使用-I参数指定include的目录
+gcc -I<include_dir> files
+
+-static: 静态编译
+-shared: 生成动态库文件, 进行动态编译
+-L <lib_dir>: 库文件搜索中添加路径
+-fPIC:生成使用相对位置无关的目标代码(Position Independent Code)
+
+编译静态链接库: 先生成目标文件.o, 然后执行ar crv [*.a] [*.o]
+链接静态库: gcc filename.c -L<lib_dir> static_lib.a
+
+编译动态链接库: 生成位置无关的目标代码 gcc -fPIC -c [*.c]
+gcc -shared [*.o] -o [*.so]
+调用动态库链接: gcc file.c -L<lib_dir> xx.so
+在执行动态编译后的文件时, 会报找不到动态库的信息, 此时可以修改/etc/ld.so.conf.d/libc.conf
+在该文件中添加动态库的链接位置, 修改conf文件后需要执行ldconfig命令,
+或者可以将自己的动态库添加到/usr/local/lib中.
+
+-Olevel: 优化等级
+
+*** 编译gcc
+gcc 依赖的类库, m4(多处理器类库), gmp(GNU的多精度数字运算类库, 依赖m4),
+mpfr(多精度浮点数运算的C类库, 依赖gmp), mpc(用于复杂的高精度运算的数学运算C类库,
+依赖gmp, mpfr)
+
+可能出现的问题:
+1. 在编译MPC的过程中可能出现"error C2065: 'GMP_RNDA' undeclared identifier",
+   解决方法: 将acos.c中的GM_RNDA常量前缀替换为MPFR_RND, 或者替换一个新版本的MPC
+2. 在编译GCC的过程中可能出现"configure: error: cannot compute suffix of object
+   files: cannot compile"的错误, 解决方法:
+   在/etc/profile文件中加入以下库文件路径: export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:
+   /usr/local/mpc-0.8.1/lib:/usr/local/gmp-5.0.1/lib:/usr/local/mpfr-3.0.0/lib,
+   之后运行source /etc/profile使其生效
+3. 在编译GCC时可能提示找不到errno.h, 将/usr/src下的copy过来或者建立软连接
+4. 在编译gcc的过程中可能出现"error while loading shared libraries: libmpc.so.2:
+   cannot open shared object file: No such file or directory", 解法同2.
+
+** gdb 使用
+gdb中的命令都可以使用命令名的第一个字母进行命令的简写
+
+list(l): 查看源码
+break(b): 打断点, b 行号: 在某一行打断点, b func_name: 在某个函数打断点
+b 15 if x > 1: 如果x>1则在15行打一个断点
+info break(b): 查看断点信息
+delete break(b): 删除断点
+
+run: 运行
+continue:
+next: step over, 如果遇到函数, 则直接跳过该函数
+step: step into, 如果遇到函数, 则进入函数内部进行执行
+finish: 完成
+
+watch: 监控值
+p: 打印某个值
+
+wi: 可以比较直观的查看调试信息
+
+** 预处理错误
+一般是在#include时会出错, not find,一般的解决方案是:
+gcc -I查找头文件的目录
+
+#include 包含头文件
+#define 宏: 其目的是用于替换
+
+一个约定: 宏名一般使用大写.
+
+预定于宏: __FUNCTION__(函数名), __LINE__(行号), __FILE__(文件名)
+
+条件处理:
+#ifdef DEBUG
+// xxx
+#endif
+
+gcc -DABC: 通过编译器传入一个宏定义
+
+宏展开:
+在宏内部使用, # 字符串化, ## 链接符号
+例如:
+#+BEGIN_SRC c
+#include <stdio.h>
+
+#define DAY(x) day##x
+
+#define MYNAME(name) #name
+
+int main() {
+  int day1 = 10;
+  int day2 = 20;
+
+  printf("the day is: %d\n", DAY(1));
+  printf("myName is: %s\n", MYNAME(DEMON));
+  return 0;
+}
+#+END_SRC
+
+** 编译错误
+主要是语法错误
+
+** 关键字
+sizeof是关键字, 而不是函数.
+
+类型修饰符: 资源属性中位置的限定.
+auto, static, register, const, extern, volatile.
+
+register限制变量定义在寄存器上. 定义一些快速访问的变量.编译器会尽量的安排
+cpu的寄存器去存放这个变量, 如果寄存器不足时, 该变量还是存放在内存中.
+取地址符号对register变量是不合法的.
+
+static: 可以修饰函数内部变量, 修饰全局变量, 修饰函数
+
+volatile: 告知编译器编译方法的关键字, 不优化编译.
+
+取模运算可以理解为得到M进制的一个各位数.
+
+左移: 用0来补位. 左移时可以不用考虑有符号数和无符号数
+右移: 跟符号变量有关. 如果是有符号数, 则使用符号位补位, 因此以下代码永远不会退出
+#+BEGIN_SRC c
+int a = -2;
+while(a) {
+  a >>= 1;
+}
+#+END_SRC
+
+&: 用来进行屏蔽操作, a = 0x1234 a & 0xff00: 屏蔽低8位
+   取出数据, a=0x1234 & 0xff00: 取出最高位
+   也叫做清零器, a = a & (~(0x1<<5)), 对第5位进行清0
+
+"|": 保留, 设置为高电平, 设置器. a = (a | (0x1 << 5)), 取出第5位
+
+^: 主要用于算法方面. 例如交换数据: 
+#+BEGIN_SRC c
+int a = 10, b = 20;
+a = a ^ b;
+b = a ^ b;
+a = a ^ b;
+#+END_SRC
+
+** 内存操作
+指针指向的内存空间, 一定要保证合法性.
+当使用char* 来读取内存数据时, 应该声明为unsigned char*
+#+BEGIN_SRC c
+char c = 'a';
+
+const char *p1 = &c; // 通常写法, p1指向的内容不能修改, 但p1可以指向其他位置
+char const *p2 = &c; // 同上
+
+// 可以联想到硬件资源
+char* const p3 = &c; // p3指向的内容可以修改, 但p3指向的位置不能修改
+
+const char * const p4 = &c; // p4指向的值以及p4的值都不能改变.
+
+voliatile char *p; // 不会进行优化
+
+int a = 0x12345678;
+int b = 0x98765432;
+
+int *p = b;
+// 输出的值是a的值, 原因是: 在分配变量内存的时候, 是从高地址到地址分配
+// 因此a的地址比b的地址大, 将p初始化为b, 然后+1, 就指向a的地址了
+printf("%x\n", p[1]);
+
+// 指针只能是同类型的比较
+
+// 数组名是一个常亮符号, 一定不要放到"="的左边
+// 数组空间的初始化和变量的初始化本质不同. 尤其是在嵌入式的裸板上进行开发时
+// 可能会借助到第三方库.
+
+//注意以下两种变量的声明方式
+char *p = "abc"; // p所指向的内容是不可以修改的
+char pp[] = {"abc"}; // pp所指向的内容是可以修改的
+
+int a[5][6];
+int (*ip)[6] = a; // ip是一个指向6个int类型的指针, 因此ip+1 等价于+6*sizeof(int)
+
+// 结构体有字节对齐, 并且成员变量的排列会影响字节对齐
+
+/*
+内核空间简单分配:
+内核空间 应用程序不允许访问
+栈空间 (局部变量)
+运行时堆空间 (malloc)
+
+全局数据空间(初始化的, 未初始化(bss段))
+只读数据段
+
+代码段 (代码段可以分为只读数据段, 全局数据空间) 只读属性
+......
+0x0000000000
+*/
+
+// 函数指针数组
+void demon(int a) {}
+void (*pfunc)(int) = demon; // 将demon函数的地址复制给pfunc, 这样可以通过pfunc调用demon函数
+void (*pafunc[2])(int) = {demon, demon}; // 定义了一个含有两个函数指针的数组, 这一条语句的分析方法如下:
+// 先去掉数组, 则能看到这是一个函数指针的声明, 然后在结合数组本身的声明方式, 就能看出是函数指针数组了
+
+#+END_SRC
+
+** 工具
+size: size filename
+strings: strings filename
+nm: 查看静态空间的段名, nm filename
+** make
+工程文件组织, 编译文件
+规则:
+targets: prerequisties
+    command
+
+makefile默认生成第一条规则文件
+
+变量:
+用户自定义变量, 引用方法: $(DemonVar)
+预定义变量
+自动变量: $*(不包含扩展名的目标文件名称), $<: 第一个依赖文件名称
+$?: 所有时间戳比目标文件晚的依赖文件, $@:目标文件完整名称,
+$^: 所有不重复的依赖文件
+
+隐式规则:
+
+伪目标:
+.PHONY install
+install:
+  cmd
+为了防止有与伪目标同名的文件, 最好是在伪目标前添加.PHONY
+
+引用其他makefile:
+include proc/makefile
+
+条件判断语句是不需要用tab进行缩进的, 否则有语法错误.
+
+*** autotools
+工具安装: apt-get install automake autoconf
+autotools工具由如下工具组成
+autoscan: 用来扫描源代码目录生成configure.scan文件, configure.scan
+包含了系统配置的基本选项, 里面都是一些宏定义, 需要将其改名为configure.in或configure.ac
+
+aclocal: 是一个perl脚步程序, 根据configure.in文件的内容, 自动生成aclocal.m4
+文件, aclocal是 "aclocal - create aclocal.m4 by scanning configure.ac"
+生成的aclocal.m4是宏展开文件,
+autoconf: 用来产生configure文件, configure.in文件的内容是一些宏, 这些宏经过
+autoconf处理后会变成检查系统特性、环境变量、软件必须的但是的shell脚本
+
+autoheader: 生成生成config.h.in, 在configure生成config.h时候的in文件
+automake: 使用automake --add-missing来产生Makefile.in, Makefile.am
+是用来生成makefile.in的, 需要手动书写.
+
+making-configure-scripts的流程:
+Files used in preparing a software package for distribution, when using just Autoconf:
+
+     your source files --> [autoscan*] --> [configure.scan] --> configure.ac
+     
+     configure.ac --.
+                    |   .------> autoconf* -----> configure
+     [aclocal.m4] --+---+
+                    |   `-----> [autoheader*] --> [config.h.in]
+     [acsite.m4] ---'
+     
+     Makefile.in
+Additionally, if you use Automake, the following additional productions come into play:
+
+     [acinclude.m4] --.
+                      |
+     [local macros] --+--> aclocal* --> aclocal.m4
+                      |
+     configure.ac ----'
+     
+     configure.ac --.
+                    +--> automake* --> Makefile.in
+     Makefile.am ---'
+Files used in configuring a software package:
+
+                            .-------------> [config.cache]
+     configure* ------------+-------------> config.log
+                            |
+     [config.h.in] -.       v            .-> [config.h] -.
+                    + -> config.status* -+               +--> make*
+     Makefile.in ---'                    `-> Makefile ---'
+
